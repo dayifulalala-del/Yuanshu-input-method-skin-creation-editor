@@ -633,6 +633,14 @@ textarea.err, input.err { border-color: #e5484d; }
     <option value="uppercased">大写</option>
     <option value="capsLocked">大写锁定</option>
   </select>
+  <select id="selState" title="模拟不同场景，预览「事件通知/条件样式」的变色效果（比如回车键在聊天框里变蓝）">
+    <option value="normal">常规状态</option>
+    <option value="rk4">场景：可发送(回车变蓝)</option>
+    <option value="rk1">场景：前往 Go</option>
+    <option value="rk7">场景：搜索 Search</option>
+    <option value="rk9">场景：完成 Done</option>
+    <option value="preedit">场景：正在打拼音</option>
+  </select>
   <select id="selZoom" title="缩放">
     <option value="auto" selected>自动适配</option>
     <option value="0.35">35%</option>
@@ -1177,6 +1185,11 @@ const Renderer = (() => {
     highlightKey: null,      // 按下高亮演示的按键名
     pressAnim: null,         // 动画播放帧数据 {key, scale, overlays:[{imgName,x,y,scale,alpha,angle,below}]}
     conditions: {},          // conditionKey -> value（条件样式模拟）
+    // 状态预览模拟器：让"事件通知/条件样式"在预览里能看到效果
+    // returnKeyType: null=默认换行；数字=某种回车键类型（4=发送 1=前往 7=搜索 9=完成…）
+    // preediting: 是否正在打拼音（触发 preeditChanged 通知）
+    // rimeOptions: { ascii_mode: true } 之类，触发 rime optionChanged 通知/条件样式
+    sim: { returnKeyType: null, preediting: false, rimeOptions: {} },
     sample: {
       preedit: 'ni hao',
       candidates: [
@@ -1328,11 +1341,45 @@ const Renderer = (() => {
   function conditionMatches(cond) {
     const key = cond.conditionKey;
     if (key == null) return true;
-    const cur = state.conditions[key];
+    // $returnKeyType 条件样式：跟随状态预览模拟器
+    let cur = state.conditions[key];
+    if (key === '$returnKeyType' && cur == null) cur = state.sim.returnKeyType;
     const want = cond.conditionValue;
     if (cur == null) return want === false || want == null; // 默认未开启
     if (Array.isArray(want)) return want.includes(cur);
     return cur === want;
+  }
+
+  // 事件通知是否在当前"状态预览"下命中（命中则这个键临时换成通知里的样式/动作）
+  function notificationMatches(ntf) {
+    if (!ntf || typeof ntf !== 'object') return false;
+    const t = ntf.notificationType;
+    if (t === 'returnKeyType') {
+      if (state.sim.returnKeyType == null) return false;
+      const want = Array.isArray(ntf.returnKeyType) ? ntf.returnKeyType : [ntf.returnKeyType];
+      return want.map(Number).includes(Number(state.sim.returnKeyType));
+    }
+    if (t === 'preeditChanged') return !!state.sim.preediting;
+    if (t === 'rime') {
+      if ((ntf.rimeNotificationType || 'optionChanged') !== 'optionChanged') return false;
+      const opt = ntf.rimeOptionName;
+      if (!opt) return false;
+      return state.sim.rimeOptions[opt] === (ntf.rimeOptionValue !== false);
+    }
+    return false;
+  }
+
+  // 找出当前状态下应生效的通知样式覆盖（返回 {backgroundStyle, foregroundStyle} 或 null）
+  function activeNotificationOverride(doc, def) {
+    if (!def || !def.notification) return null;
+    const ntfs = Array.isArray(def.notification) ? def.notification : [def.notification];
+    for (const nn of ntfs) {
+      const ntf = typeof nn === 'string' ? doc[nn] : nn;
+      if (notificationMatches(ntf)) {
+        return { backgroundStyle: ntf.backgroundStyle, foregroundStyle: ntf.foregroundStyle };
+      }
+    }
+    return null;
   }
 
   // ---------- 布局 ----------
@@ -1751,12 +1798,18 @@ const Renderer = (() => {
     }
     const pressed = state.highlightKey === name;
 
-    // 通知样式覆盖（预览时按条件开关模拟）
     let bgRef = def.backgroundStyle, fgRef = def.foregroundStyle;
+    // 大写 / 大写锁定状态：前景换成对应样式
     if (state.shiftState !== 'normal') {
       if (state.shiftState === 'uppercased' && def.uppercasedStateForegroundStyle) fgRef = def.uppercasedStateForegroundStyle;
       if (state.shiftState === 'capsLocked' && (def.capsLockedStateForegroundStyle || def.uppercasedStateForegroundStyle))
         fgRef = def.capsLockedStateForegroundStyle || def.uppercasedStateForegroundStyle;
+    }
+    // 事件通知覆盖（状态预览命中时，这个键临时换成通知里的样式，还原真机效果）
+    const ntfOv = activeNotificationOverride(doc, def);
+    if (ntfOv) {
+      if (ntfOv.backgroundStyle != null) bgRef = ntfOv.backgroundStyle;
+      if (ntfOv.foregroundStyle != null) fgRef = ntfOv.foregroundStyle;
     }
 
     // cell 自身 insets / bounds
@@ -3411,6 +3464,18 @@ const Inspector = (() => {
     draw();
   }
 
+  // 判断某个样式引用是否是「按 $returnKeyType 变化的条件样式」
+  function usesReturnKeyCondition(ref) {
+    if (!Array.isArray(ref)) return false;
+    return ref.some(x => x && typeof x === 'object' && x.conditionKey === '$returnKeyType');
+  }
+
+  // 让预览切到某个模拟场景（并同步顶栏下拉框）
+  function setPreviewState(v) {
+    const sel = document.getElementById('selState');
+    if (sel) { sel.value = v; sel.dispatchEvent(new Event('change')); }
+  }
+
   // ============ 通知编辑 ============
   function notificationEditor(container, doc, def) {
     container.innerHTML = '';
@@ -3419,13 +3484,35 @@ const Inspector = (() => {
       '举例：① 聊天框里能发送时，回车键自动变蓝（像系统键盘）② 切到英文模式时，中/英键换个颜色 ③ 正在打拼音时，回车键变成"确认"。\n' +
       '不需要的话完全可以不管这里。'));
 
+    // 关键提示：预览里看不到效果 → 用顶栏「状态预览」切换场景才能看到
+    container.appendChild(el('div', 'hint-line',
+      '👀 看不到效果？通知只在特定场景才触发。请用顶栏的「状态预览」下拉框切到对应场景（如"可发送"），预览里就能看到这个键变样了。'));
+    const testBar = el('div');
+    testBar.appendChild(button('▶ 预览"可发送"场景', () => setPreviewState('rk4'), 'btn small'));
+    testBar.appendChild(button('▶ 预览"打拼音"场景', () => setPreviewState('preedit'), 'btn small'));
+    testBar.appendChild(button('↩ 回常规', () => setPreviewState('normal'), 'btn small'));
+    container.appendChild(testBar);
+
+    // jsonnet 皮肤覆盖风险提示
+    if ([...SkinModel.model.rawFiles.keys()].some(p => p.startsWith('jsonnet/'))) {
+      container.appendChild(el('div', 'hint-line warn',
+        '⚠ 这个皮肤带 jsonnet 源码。在这里改的通知，如果之后在手机上「运行 main.jsonnet」重新编译，会被覆盖。想永久保留就别再运行 jsonnet，或直接改 jsonnet 源码。'));
+    }
+
+    const keyName = App.selection;
     const names = def.notification == null ? [] : (Array.isArray(def.notification) ? [...def.notification] : [def.notification]);
+
+    // 智能检测：这个键是否已用「条件样式」实现了"可发送变蓝"（很多成品皮肤这么做）
+    if (!names.length && (usesReturnKeyCondition(def.backgroundStyle) || usesReturnKeyCondition(def.foregroundStyle))) {
+      container.appendChild(el('div', 'hint-line ok',
+        '✅ 这个键已经通过「条件样式」实现了随回车键类型自动变色（这是成品皮肤常用做法，和"事件通知"效果一样）。\n' +
+        '用顶栏「状态预览」切到"可发送"就能看到它变蓝——不需要再加通知。'));
+    }
 
     // 一键模板：回车键智能变蓝
     if (!names.length) {
       container.appendChild(button('＋一键模板：这个键在"可发送"时变蓝（适合回车键）', () => {
         App.edit(d => {
-          const keyName = App.selection;
           const dd = d[keyName]; if (!dd) return;
           const ntf = uniqueName(d, keyName + 'BlueNtf');
           const bg = uniqueName(d, keyName + 'BlueBg');
@@ -3446,7 +3533,8 @@ const Inspector = (() => {
           dd.notification = [ntf];
         });
         notificationEditor(container, doc, def);
-        toast('已添加！手机上聊天框能发送时这个键会变蓝（预览里不模拟此状态）');
+        toast('已添加！点上面「▶ 预览可发送场景」马上看效果');
+        setTimeout(() => setPreviewState('rk4'), 200);
       }, 'btn small'));
     }
     names.forEach((n, i) => {
@@ -6789,6 +6877,17 @@ const App = (() => {
     document.getElementById('selShift').onchange = e => {
       Renderer.state.shiftState = e.target.value;
       renderPreview();
+    };
+    document.getElementById('selState').onchange = e => {
+      const v = e.target.value;
+      const sim = Renderer.state.sim;
+      sim.returnKeyType = null; sim.preediting = false;
+      if (v === 'preedit') sim.preediting = true;
+      else if (v.startsWith('rk')) sim.returnKeyType = Number(v.slice(2));
+      // 打拼音场景顺便让候选栏/预编辑有内容，更直观
+      renderPreview();
+      if (v === 'normal') toast('已回到常规状态');
+      else toast('已切到模拟场景：真机在此情况下，带「事件通知/条件样式」的键会自动变样');
     };
     document.getElementById('selZoom').onchange = e => {
       if (e.target.value === 'auto') applyAutoZoom();
