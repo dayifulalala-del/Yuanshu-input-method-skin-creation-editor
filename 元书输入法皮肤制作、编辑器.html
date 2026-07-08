@@ -3905,24 +3905,55 @@ const Inspector = (() => {
     // ---- 快速配色（只影响这一个键，共享样式自动分离） ----
     const quickSec = section('快速配色（只改这一个键）', true);
 
-    // 智能检测「条件样式」（会随场景自动变色，如回车键可发送时变蓝）——给小白一个一键取消
+    // 智能检测「自动变色」并一键取消。覆盖两条路径：
+    //   ① 条件样式（backgroundStyle/foregroundStyle 里带 conditionKey）
+    //   ② 事件通知——尤其是 notificationType: returnKeyType 的通知：仓输入法会「自动」
+    //      把它加到回车键上（不需要按键里写 notification），这才是"可发送变蓝"的真正来源。
     const isCondRef = k => Array.isArray(def[k]) && def[k].some(x => x && typeof x === 'object' && x.conditionKey);
-    if (isCondRef('backgroundStyle') || isCondRef('foregroundStyle')) {
+    const isReturnKey = def.action === 'enter';
+    const returnKeyNtfNames = () => Object.keys(doc).filter(k => {
+      const v = doc[k];
+      return v && typeof v === 'object' && !Array.isArray(v) && v.notificationType === 'returnKeyType';
+    });
+    const ownNtfNames = def.notification == null ? [] : (Array.isArray(def.notification) ? def.notification : [def.notification]);
+    const hasAutoColor = isCondRef('backgroundStyle') || isCondRef('foregroundStyle') ||
+      (isReturnKey && returnKeyNtfNames().length > 0) ||
+      ownNtfNames.some(n => typeof n === 'string' && doc[n]);
+    if (hasAutoColor) {
       quickSec.body.appendChild(el('div', 'hint-line',
-        '💡 这个键开启了「自动变色」（会随场景变颜色，比如回车键在能发送时变蓝）。\n想让它固定成一种样子、不再自动变色，点下面的按钮：'));
+        '💡 这个键会「自动变色」（随场景变颜色，比如回车键在能发送时变蓝）。\n想让它固定成一种样子、彻底不再变色，点下面按钮：'));
       quickSec.body.appendChild(button('🚫 取消自动变色，固定成常规样子', () => {
         App.edit(d => {
-          const dd = d[keyName]; if (!dd) return;
+          const dd = d[keyName]; if (!dd || typeof dd !== 'object') return;
+          // ① 展平自身条件样式：选「默认状态」那一项（条件值含 0 = 平常的样子），没有就取第一项
           for (const key of ['backgroundStyle', 'foregroundStyle']) {
             const ref = dd[key];
             if (!Array.isArray(ref) || !ref.some(x => x && typeof x === 'object' && x.conditionKey)) continue;
-            // 选「默认状态」那一项（条件值含 0 = 普通换行时的样子），没有就取第一项
             let pick = ref.find(x => x && Array.isArray(x.conditionValue) && x.conditionValue.map(Number).includes(0));
             if (!pick) pick = ref.find(x => x && x.styleName != null);
             if (pick && pick.styleName != null) dd[key] = Array.isArray(pick.styleName) ? pick.styleName[0] : pick.styleName;
           }
+          const cloneRef = r => Array.isArray(r) ? JSON.parse(JSON.stringify(r)) : r;
+          const normBg = dd.backgroundStyle, normFg = dd.foregroundStyle;
+          // ② 中和会给这个键变色的事件通知：把通知里的背景/前景换成这个键的常规样式，
+          //    这样即使通知被触发，看起来也和平常一模一样（不再变蓝）。
+          const targets = new Set();
+          for (const nn of (dd.notification == null ? [] : (Array.isArray(dd.notification) ? dd.notification : [dd.notification])))
+            if (typeof nn === 'string') targets.add(nn);
+          if (dd.action === 'enter') {
+            for (const k in d) {
+              const v = d[k];
+              if (v && typeof v === 'object' && !Array.isArray(v) && v.notificationType === 'returnKeyType') targets.add(k);
+            }
+          }
+          for (const nk of targets) {
+            const ntf = d[nk];
+            if (!ntf || typeof ntf !== 'object') continue;
+            if (normBg != null) ntf.backgroundStyle = cloneRef(normBg);
+            if (normFg != null) ntf.foregroundStyle = cloneRef(normFg);
+          }
         });
-        toast('已固定成常规样子，这个键不再自动变色（记得重新导出并导入手机才生效）');
+        toast('已固定成常规样子，回车键"可发送变蓝"也一并取消了（记得重新导出并导入手机才生效）');
         showKey(container, doc, keyName);
       }, 'btn small'));
       quickSec.body.appendChild(el('div', 'hint-line', '取消后，下面的「按键底色/文字颜色」就能正常单独改这个键了。'));
