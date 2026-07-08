@@ -3904,6 +3904,30 @@ const Inspector = (() => {
 
     // ---- 快速配色（只影响这一个键，共享样式自动分离） ----
     const quickSec = section('快速配色（只改这一个键）', true);
+
+    // 智能检测「条件样式」（会随场景自动变色，如回车键可发送时变蓝）——给小白一个一键取消
+    const isCondRef = k => Array.isArray(def[k]) && def[k].some(x => x && typeof x === 'object' && x.conditionKey);
+    if (isCondRef('backgroundStyle') || isCondRef('foregroundStyle')) {
+      quickSec.body.appendChild(el('div', 'hint-line',
+        '💡 这个键开启了「自动变色」（会随场景变颜色，比如回车键在能发送时变蓝）。\n想让它固定成一种样子、不再自动变色，点下面的按钮：'));
+      quickSec.body.appendChild(button('🚫 取消自动变色，固定成常规样子', () => {
+        App.edit(d => {
+          const dd = d[keyName]; if (!dd) return;
+          for (const key of ['backgroundStyle', 'foregroundStyle']) {
+            const ref = dd[key];
+            if (!Array.isArray(ref) || !ref.some(x => x && typeof x === 'object' && x.conditionKey)) continue;
+            // 选「默认状态」那一项（条件值含 0 = 普通换行时的样子），没有就取第一项
+            let pick = ref.find(x => x && Array.isArray(x.conditionValue) && x.conditionValue.map(Number).includes(0));
+            if (!pick) pick = ref.find(x => x && x.styleName != null);
+            if (pick && pick.styleName != null) dd[key] = Array.isArray(pick.styleName) ? pick.styleName[0] : pick.styleName;
+          }
+        });
+        toast('已固定成常规样子，这个键不再自动变色（记得重新导出并导入手机才生效）');
+        showKey(container, doc, keyName);
+      }, 'btn small'));
+      quickSec.body.appendChild(el('div', 'hint-line', '取消后，下面的「按键底色/文字颜色」就能正常单独改这个键了。'));
+    }
+
     const bgRef0 = typeof def.backgroundStyle === 'string' ? doc[def.backgroundStyle] : null;
     const isImgBg = bgRef0 && bgRef0.buttonStyleType === 'fileImage';
     if (isImgBg) {
