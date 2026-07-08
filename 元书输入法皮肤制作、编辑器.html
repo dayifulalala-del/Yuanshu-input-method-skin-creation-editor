@@ -4786,7 +4786,7 @@ const Panels = (() => {
     const areaKey = App.layoutArea || 'keyboardLayout';
     if (!Array.isArray(doc[areaKey])) {
       container.appendChild(button('＋ 创建这个区域的布局', () => {
-        App.edit(d => { d[areaKey] = [{ HStack: { subviews: [] } }]; });
+        App.editLayout(() => { App.currentDoc()[areaKey] = [{ HStack: { subviews: [] } }]; });
         buildLayoutPanel(container);
       }, 'btn small'));
       return;
@@ -4812,16 +4812,14 @@ const Panels = (() => {
     function drawLevel(arr, depth, parentArr, parentIdx) {
       arr.forEach((item, i) => {
         const move = (dir) => () => {
-          App.edit(() => {
-            const j = i + dir;
-            if (j < 0 || j >= arr.length) return;
-            [arr[i], arr[j]] = [arr[j], arr[i]];
-          });
+          const j = i + dir;
+          if (j < 0 || j >= arr.length) return;
+          App.editLayout(() => { [arr[i], arr[j]] = [arr[j], arr[i]]; });
           buildLayoutPanel(container);
         };
         const remove = () => {
           if (!confirm('确定删除这一项（含其子项）吗？')) return;
-          App.edit(() => { arr.splice(i, 1); });
+          App.editLayout(() => { arr.splice(i, 1); });
           buildLayoutPanel(container);
         };
         if (item.HStack || item.VStack) {
@@ -4832,8 +4830,8 @@ const Panels = (() => {
           const row = nodeRow(`${item.HStack ? '➡ 行' : '⬇ 列'} ${kind}（尺寸 ${sz}）`, depth, [
             ['尺寸', () => editStackSize(stack, kind), '设置这一行/列的高度或宽度'],
             ['＋键', () => addCellTo(stack), '添加按键'],
-            ['＋行', () => { App.edit(() => { stack.subviews = stack.subviews || []; stack.subviews.push({ HStack: { subviews: [] } }); }); buildLayoutPanel(container); }],
-            ['＋列', () => { App.edit(() => { stack.subviews = stack.subviews || []; stack.subviews.push({ VStack: { subviews: [] } }); }); buildLayoutPanel(container); }],
+            ['＋行', () => { App.editLayout(() => { stack.subviews = stack.subviews || []; stack.subviews.push({ HStack: { subviews: [] } }); }); buildLayoutPanel(container); }],
+            ['＋列', () => { App.editLayout(() => { stack.subviews = stack.subviews || []; stack.subviews.push({ VStack: { subviews: [] } }); }); buildLayoutPanel(container); }],
             ['↑', move(-1)], ['↓', move(1)], ['✕', remove],
           ], 'lt-stack');
           tree.appendChild(row);
@@ -4847,7 +4845,7 @@ const Panels = (() => {
             ['选中', () => { App.selection = name; App.renderAll(); }],
             ['换', () => {
               const nn = prompt('引用的按键名：', name);
-              if (nn) { App.edit(() => { item.Cell = nn; }); buildLayoutPanel(container); }
+              if (nn) { App.editLayout(() => { item.Cell = nn; }); buildLayoutPanel(container); }
             }, '改为引用其他按键'],
             ['↑', move(-1)], ['↓', move(1)], ['✕', remove],
           ], 'lt-cell' + (missing ? ' missing' : '') + (App.selection === name ? ' selected' : ''));
@@ -4863,7 +4861,8 @@ const Panels = (() => {
       let styleName = typeof stack.style === 'string' ? stack.style : null;
       const cur = styleName && doc[styleName] && doc[styleName].size ? doc[styleName].size[dimKey] : null;
       m.body.appendChild(field(dimKey === 'height' ? '高度' : '宽度', UI.dimInput(cur, v => {
-        App.edit(d => {
+        App.editLayout(() => {
+          const d = App.currentDoc();
           if (v == null) {
             if (styleName && d[styleName] && d[styleName].size) delete d[styleName].size[dimKey];
             return;
@@ -4882,12 +4881,19 @@ const Panels = (() => {
       })));
     }
 
+    // 两个模式下同名文档（新建按键时定义要同时写进浅色+深色，否则镜像后的布局会引用到缺失的键）
+    const bothModeDocs = () => [['light', false], ['dark', true]]
+      .map(([mode, isDark]) => [M().docs[mode][Renderer.state.docName], isDark])
+      .filter(([d]) => d && !d.__parseError);
+    const nameTakenAnyMode = nm => bothModeDocs().some(([d]) => d[nm] != null);
+    const uniqueDocName = base => { let n = base, i = 2; while (nameTakenAnyMode(n)) n = base + i++; return n; };
+
     function addCellTo(stack) {
       const m = UI.modal('添加按键', '440px');
       m.body.appendChild(button('引用已有按键…', () => {
         m.close();
         pickKeyName(doc, n => {
-          App.edit(() => { stack.subviews = stack.subviews || []; stack.subviews.push({ Cell: n }); });
+          App.editLayout(() => { stack.subviews = stack.subviews || []; stack.subviews.push({ Cell: n }); });
           buildLayoutPanel(container);
         });
       }, 'pick-item'));
@@ -4895,12 +4901,13 @@ const Panels = (() => {
         m.close();
         const ch = prompt('这个键输入什么字符？（如 a)：', 'a');
         if (ch == null) return;
-        let n = ch.replace(/[^\w]/g, '_') + 'Button', i = 2;
-        while (doc[n]) n = ch + 'Button' + i++;
-        App.edit(d => {
-          const fgn = n + 'ForegroundStyle';
-          d[fgn] = { buttonStyleType: 'text', text: ch, fontSize: 20, normalColor: Renderer.state.mode === 'dark' ? '#ffffff' : '#000000' };
-          d[n] = { action: { character: ch }, foregroundStyle: fgn };
+        const n = uniqueDocName((ch.replace(/[^\w]/g, '_') || 'key') + 'Button');
+        const fgn = n + 'ForegroundStyle';
+        App.editLayout(() => {
+          for (const [d, isDark] of bothModeDocs()) {
+            d[fgn] = { buttonStyleType: 'text', text: ch, fontSize: 20, normalColor: isDark ? '#ffffff' : '#000000' };
+            d[n] = { action: { character: ch }, foregroundStyle: fgn };
+          }
           stack.subviews = stack.subviews || [];
           stack.subviews.push({ Cell: n });
         });
@@ -4913,12 +4920,13 @@ const Panels = (() => {
         for (const [v, lab] of Actions.STANDARD) {
           m2.body.appendChild(button(lab, () => {
             m2.close();
-            let n = v + 'Button', i = 2;
-            while (doc[n]) n = v + 'Button' + i++;
-            App.edit(d => {
-              const fgn = n + 'ForegroundStyle';
-              d[fgn] = { buttonStyleType: 'text', text: lab, fontSize: 14, normalColor: Renderer.state.mode === 'dark' ? '#ffffff' : '#000000' };
-              d[n] = { action: v, foregroundStyle: fgn };
+            const n = uniqueDocName(v + 'Button');
+            const fgn = n + 'ForegroundStyle';
+            App.editLayout(() => {
+              for (const [d, isDark] of bothModeDocs()) {
+                d[fgn] = { buttonStyleType: 'text', text: lab, fontSize: 14, normalColor: isDark ? '#ffffff' : '#000000' };
+                d[n] = { action: v, foregroundStyle: fgn };
+              }
               stack.subviews = stack.subviews || [];
               stack.subviews.push({ Cell: n });
             });
@@ -4932,11 +4940,11 @@ const Panels = (() => {
     drawLevel(doc[areaKey], 0, null, -1);
 
     container.appendChild(button('＋ 在最外层加一行 HStack', () => {
-      App.edit(d => { d[areaKey].push({ HStack: { subviews: [] } }); });
+      App.editLayout(() => { const d = App.currentDoc(); d[areaKey] = d[areaKey] || []; d[areaKey].push({ HStack: { subviews: [] } }); });
       buildLayoutPanel(container);
     }, 'btn small'));
     container.appendChild(button('＋ 在最外层加一列 VStack', () => {
-      App.edit(d => { d[areaKey].push({ VStack: { subviews: [] } }); });
+      App.editLayout(() => { const d = App.currentDoc(); d[areaKey] = d[areaKey] || []; d[areaKey].push({ VStack: { subviews: [] } }); });
       buildLayoutPanel(container);
     }, 'btn small'));
     container.appendChild(el('div', 'hint-line', '规则：同一层里只能全用行、或全用列、或全放按键，不能混用。'));
@@ -6118,6 +6126,48 @@ const App = (() => {
     renderAll();
   }
 
+  // 布局结构编辑（布局树专用）：mut 只应用一次，避免 edit() 在开启「明暗同步改」时
+  // 重复执行导致「加一个键变两个 / 上下移动交换两次=无效 / 删一项删两项」。
+  // 应用后把布局结构镜像到另一模式，保证浅色/深色排版完全一致。
+  const LAYOUT_AREAS = ['keyboardLayout', 'toolbarLayout', 'horizontalCandidatesLayout', 'verticalCandidatesLayout'];
+  function editLayout(mut) {
+    pushUndo();
+    try {
+      const doc = currentDoc();
+      if (!doc) return;
+      mut();  // 只跑一次
+      const mode = Renderer.state.mode, name = Renderer.state.docName;
+      M().docDirty[mode].add(name);
+      if (app.syncModes) {
+        const od = otherDoc();
+        if (od && !od.__parseError) {
+          for (const area of LAYOUT_AREAS) {
+            if (Array.isArray(doc[area])) od[area] = JSON.parse(JSON.stringify(doc[area]));
+            else if (doc[area] === undefined) delete od[area];
+          }
+          // 布局里 HStack/VStack 引用的尺寸样式（stackStyleN 等）也复制过去，
+          // 否则另一模式会引用到不存在的样式
+          syncStackStyles(doc, od);
+          M().docDirty[mode === 'light' ? 'dark' : 'light'].add(name);
+        }
+      }
+    } catch (e) { console.error(e); toast('修改失败：' + e.message, true); }
+    renderPreview();
+    updateTitle();
+  }
+  function syncStackStyles(src, dst) {
+    const used = new Set();
+    const walk = arr => {
+      if (!Array.isArray(arr)) return;
+      for (const it of arr) {
+        if (it && it.HStack) { if (typeof it.HStack.style === 'string') used.add(it.HStack.style); walk(it.HStack.subviews); }
+        if (it && it.VStack) { if (typeof it.VStack.style === 'string') used.add(it.VStack.style); walk(it.VStack.subviews); }
+      }
+    };
+    for (const area of LAYOUT_AREAS) walk(src[area]);
+    for (const n of used) if (src[n] && dst[n] === undefined) dst[n] = JSON.parse(JSON.stringify(src[n]));
+  }
+
   // ---------- 撤销 / 重做 ----------
   function pushUndo() {
     try {
@@ -7063,7 +7113,7 @@ const App = (() => {
     set layoutArea(v) { app.layoutArea = v; },
     get sourceFile() { return app.sourceFile; },
     set sourceFile(v) { app.sourceFile = v; },
-    currentDoc, edit, commit, batchEdit, undo, redo,
+    currentDoc, edit, commit, batchEdit, editLayout, undo, redo,
     renderAll, renderPreview, refreshLeftPanel, refreshInspector,
     importFile, exportFile, loadFromUrl, testAnimation,
     applyAnimationEverywhere, removeAnimationEverywhere,
