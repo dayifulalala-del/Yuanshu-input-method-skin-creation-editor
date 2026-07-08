@@ -114,6 +114,11 @@ textarea.err, input.err { border-color: #e5484d; }
 .btn.primary:hover { background: var(--accent-deep2); }
 .btn.small { padding: 2px 8px; font-size: 12px; margin: 2px 2px 2px 0; }
 .btn.danger { color: var(--danger); border-color: var(--danger-border); }
+.btn.wizard {
+  background: linear-gradient(120deg, #7b5cff, #4f8cff);
+  border-color: #6a7bff; color: #fff; font-weight: 700;
+}
+.btn.wizard:hover { background: linear-gradient(120deg, #8b6cff, #5f9cff); }
 .mini-btn {
   background: var(--mini-bg); color: var(--text-dim); border: 1px solid var(--border2);
   border-radius: 4px; padding: 1px 6px; cursor: pointer; font-size: 12px;
@@ -417,6 +422,39 @@ textarea.err, input.err { border-color: #e5484d; }
 /* 渐变编辑 */
 .grad-row { display: flex; align-items: center; gap: 4px; margin: 3px 0; }
 
+/* 向导 */
+.wiz-theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin: 10px 0; }
+.wiz-theme-card {
+  background: var(--panel3); border: 2px solid var(--border2); border-radius: 10px;
+  padding: 8px; cursor: pointer; font: inherit; color: var(--text); text-align: center;
+}
+.wiz-theme-card:hover { border-color: var(--accent); }
+.wiz-theme-card.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
+.wiz-swatch {
+  height: 54px; border-radius: 7px; display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid rgba(128,128,128,.25);
+}
+.wiz-k {
+  width: 24px; height: 32px; border-radius: 5px; display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 600;
+}
+.wiz-theme-name { font-size: 13px; font-weight: 700; margin-top: 6px; }
+.wiz-theme-tag { font-size: 11px; color: var(--text-mute); }
+.wiz-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; }
+.wiz-foot .btn { flex: 1; padding: 9px; }
+
+/* SF 图标选择器 */
+.sf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin: 8px 0; }
+.sf-item {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: var(--panel3); border: 1px solid var(--border2); border-radius: 8px;
+  padding: 8px 4px; cursor: pointer; font: inherit; color: var(--text);
+}
+.sf-item:hover { border-color: var(--accent); background: var(--hover-row); }
+.sf-item .sf-glyph { font-size: 22px; line-height: 1.1; }
+.sf-item .sf-zh { font-size: 12px; color: var(--text); text-align: center; }
+.sf-item .sf-name { font-size: 10px; color: var(--text-mute); word-break: break-all; text-align: center; }
+
 /* 皮肤封面 */
 .demo-img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border2); }
 
@@ -566,6 +604,7 @@ textarea.err, input.err { border-color: #e5484d; }
 <div id="topbar">
   <span class="brand">元书皮肤编辑器</span>
   <span id="titleName">未打开皮肤</span>
+  <button class="btn wizard" id="btnWizard" title="不懂参数也能做皮肤：跟着几步走，自动配好颜色">🪄 一键做皮肤</button>
   <button class="btn primary" id="btnImport">导入 .cskin</button>
   <button class="btn" id="btnNew">新建皮肤</button>
   <button class="btn primary" id="btnExport">导出 .cskin</button>
@@ -681,10 +720,15 @@ textarea.err, input.err { border-color: #e5484d; }
           <canvas id="previewCanvas"></canvas>
           <canvas id="overlayCanvas"></canvas>
           <div id="previewEmpty">
-            把 .cskin 文件拖进来，或点左上角「导入」。<br><br>
-            · 点击预览里的按键 → 右侧直接改<br>
-            · 按住按键不放 → 查看按下效果和按键动画<br>
-            · 点击空白区域 → 打开全局设置
+            <div style="font-size:15px;color:var(--text);margin-bottom:6px">第一次做皮肤？</div>
+            <button class="btn wizard" id="btnWizardEmpty" style="font-size:15px;padding:10px 18px;margin-bottom:16px">🪄 点这里一键做皮肤</button>
+            <div style="font-size:12px;line-height:1.8">
+              或者：把 .cskin 文件拖进来 / 点左上角「导入」修改现成皮肤<br><br>
+              做皮肤时：<br>
+              · 点预览里的按键 → 右侧直接改颜色文字<br>
+              · 按住按键不放 → 看按下效果和动画<br>
+              · 点空白区域 → 打开整体设置
+            </div>
           </div>
         </div>
         <div id="psHome"></div>
@@ -1849,7 +1893,6 @@ const Renderer = (() => {
   }
 
   function paintHorizontalCandidates(ctx, doc, def, r) {
-    const cs = candidateStyleOf(ctx, def) || {};
     const style = candidateStyleOf(doc, def);
     const list = state.sample.candidates;
     ctx.save();
@@ -1929,31 +1972,67 @@ const Renderer = (() => {
     }
   }
 
-  // ---------- hint 气泡（长按符号）预览 ----------
+  // ---------- hint 气泡（长按符号面板）预览 ----------
+  // 官方文档：guides/skins/hintsymbolsgrid（长按符号面板）
+  // 兼容旧版属性名 holdSymbolsStyle（仓 v2），符号多时自动换行排成网格
+  function hintSymbolsOf(doc, def) {
+    if (!def) return null;
+    const ref = def.hintSymbolsStyle != null ? def.hintSymbolsStyle : def.holdSymbolsStyle;
+    if (ref == null) return null;
+    return typeof ref === 'string' ? doc[ref] : ref;
+  }
+
   function paintHintSymbols(ctx, doc, node) {
     const def = node.def;
-    if (!def || !def.hintSymbolsStyle) return;
-    const hs = typeof def.hintSymbolsStyle === 'string' ? doc[def.hintSymbolsStyle] : def.hintSymbolsStyle;
+    const hs = hintSymbolsOf(doc, def);
     if (!hs) return;
     const names = hs.symbolStyles || [];
     if (!names.length) return;
     const unit = hs.size || { width: 40, height: 50 };
     const uw = Number(unit.width) || 40, uh = Number(unit.height) || 50;
-    const total = uw * names.length;
-    let x = node.rect.x + node.rect.w / 2 - total / 2;
-    let y = node.rect.y - uh - 4;
+    const scrW = lastLayoutSize.w || screen().w;
+
+    // 一行放不下就换行 → 网格（与真机的符号面板行为一致）
+    const maxCols = Math.max(1, Math.floor((scrW - 8) / uw));
+    const cols = Math.min(names.length, maxCols);
+    const rows = Math.ceil(names.length / cols);
+    const totalW = uw * cols, totalH = uh * rows;
+
+    // 面板对准按键中心，超出屏幕边缘时往回收
+    let x = node.rect.x + node.rect.w / 2 - totalW / 2;
+    x = Math.max(4, Math.min(x, scrW - totalW - 4));
+    let y = node.rect.y - totalH - 4;
     if (y < 0) y = node.rect.y + node.rect.h + 4;
-    // 背景
-    const bgRect = insetRect({ x, y, w: total, h: uh }, null);
+
+    // 面板整体背景
+    const bgRect = { x, y, w: totalW, h: totalH };
     for (const st of resolveStyleRefList(doc, hs.backgroundStyle)) paintStyle(ctx, doc, st, bgRect);
+
+    const selIdx = Number(hs.selectedIndex || 0);
     names.forEach((n, i) => {
       const sdef = typeof n === 'string' ? doc[n] : n;
-      const cellRect = { x: x + i * uw, y, w: uw, h: uh };
-      if (!sdef) return;
-      if (i === Number(hs.selectedIndex || 0)) {
+      const cellRect = {
+        x: x + (i % cols) * uw,
+        y: y + Math.floor(i / cols) * uh,
+        w: uw, h: uh,
+      };
+      if (!sdef) { paintMissing(ctx, cellRect, String(n)); return; }
+      if (i === selIdx) {
         for (const st of resolveStyleRefList(doc, hs.selectedBackgroundStyle)) paintStyle(ctx, doc, st, cellRect);
       }
       for (const st of resolveStyleRefList(doc, sdef.foregroundStyle)) paintStyle(ctx, doc, st, cellRect);
+      // 符号本身没有前景样式时，尽量把动作内容画出来（避免面板看起来是空的）
+      if (!sdef.foregroundStyle && sdef.action && typeof sdef.action === 'object') {
+        const t = sdef.action.symbol != null ? sdef.action.symbol : sdef.action.character;
+        if (t != null) {
+          ctx.save();
+          ctx.fillStyle = state.mode === 'dark' ? '#fff' : '#000';
+          ctx.font = '16px -apple-system, "PingFang SC", sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(String(t), cellRect.x + cellRect.w / 2, cellRect.y + cellRect.h / 2);
+          ctx.restore();
+        }
+      }
     });
   }
 
@@ -2123,6 +2202,7 @@ const Renderer = (() => {
   }
 
   return { state, render, drawOverlay, hitTest, parseColor, fontWeightCss, resolveDim, DEVICES,
+           sfGlyph, SF_MAP, hintSymbolsOf,
            get hitRects() { return hitRects; }, get layoutSize() { return lastLayoutSize; } };
 })();
 
@@ -2419,17 +2499,39 @@ const Actions = (() => {
     ['none', '无动作'],
   ];
 
-  // 快捷指令
-  const SHORTCUTS = [
-    '#简繁切换', '#中英切换', '#RimeSwitcher', '#次选上屏', '#三选上屏', '#方案切换',
-    '#左手模式', '#右手模式', '#行首', '#行尾', '#换行', '#Enter', '#重输',
-    '#subCollectionPageUp', '#subCollectionPageDown',
-    '#verticalCandidatesPageDown', '#verticalCandidatesPageUp',
-    '#showPhraseView', '#showPasteboardView', '#toggleScriptView',
-    '#candidatesBarStateToggle', '#rimePreviousPage', '#rimeNextPage',
-    '#toggleEmbeddedInputMode', '#keyboardPerformance', '#keyboardMenu',
-    '#clearSystemPasteboard', '#deleteText',
+  // 快捷指令：[指令代码, 通俗中文说明]
+  const SHORTCUT_PAIRS = [
+    ['#简繁切换', '简体/繁体切换'],
+    ['#中英切换', '中文/英文切换'],
+    ['#RimeSwitcher', '打开方案选单（Rime）'],
+    ['#次选上屏', '把第 2 个候选词打上去'],
+    ['#三选上屏', '把第 3 个候选词打上去'],
+    ['#方案切换', '切换输入方案'],
+    ['#左手模式', '键盘靠左（单手模式）'],
+    ['#右手模式', '键盘靠右（单手模式）'],
+    ['#行首', '光标跳到行首'],
+    ['#行尾', '光标跳到行尾'],
+    ['#换行', '换行'],
+    ['#Enter', '回车（Enter）'],
+    ['#重输', '清空正在打的拼音'],
+    ['#subCollectionPageUp', '符号面板·上翻页'],
+    ['#subCollectionPageDown', '符号面板·下翻页'],
+    ['#verticalCandidatesPageUp', '竖排候选·上翻页'],
+    ['#verticalCandidatesPageDown', '竖排候选·下翻页'],
+    ['#showPhraseView', '打开常用语面板'],
+    ['#showPasteboardView', '打开剪贴板面板'],
+    ['#toggleScriptView', '打开/关闭脚本面板'],
+    ['#candidatesBarStateToggle', '展开/收起候选栏'],
+    ['#rimePreviousPage', '候选词·上一页'],
+    ['#rimeNextPage', '候选词·下一页'],
+    ['#toggleEmbeddedInputMode', '开/关拼音嵌入输入框'],
+    ['#keyboardPerformance', '显示键盘性能信息'],
+    ['#keyboardMenu', '打开键盘菜单'],
+    ['#clearSystemPasteboard', '清空系统剪贴板'],
+    ['#deleteText', '删除选中的文本'],
   ];
+  const SHORTCUTS = SHORTCUT_PAIRS.map(p => p[0]);
+  const SHORTCUT_LABELS = Object.fromEntries(SHORTCUT_PAIRS);
 
   const KEYBOARD_TYPES = [
     ['pinyin', '拼音中文键盘'],
@@ -2468,7 +2570,10 @@ const Actions = (() => {
         const f = KEYBOARD_TYPES.find(([k]) => k === action.keyboardType);
         return `切换键盘 → ${f ? f[1] : action.keyboardType}`;
       }
-      if ('shortcut' in action) return `快捷指令 ${action.shortcut}`;
+      if ('shortcut' in action) {
+        const zh = SHORTCUT_LABELS[action.shortcut];
+        return zh ? `${zh}（${action.shortcut}）` : `快捷指令 ${action.shortcut}`;
+      }
       if ('switchRimeSchema' in action) return `切换方案 ${action.switchRimeSchema}`;
       if ('combine' in action) return `组合动作（${(action.combine || []).length} 个）`;
     }
@@ -2547,9 +2652,9 @@ const Actions = (() => {
         if (!cur) fire();
       } else if (t === 'shortcut') {
         const s2 = document.createElement('select');
-        for (const v of SHORTCUTS) {
+        for (const [v, zh] of SHORTCUT_PAIRS) {
           const o = document.createElement('option');
-          o.value = v; o.textContent = v;
+          o.value = v; o.textContent = `${zh}（${v}）`;
           s2.appendChild(o);
         }
         const oCustom = document.createElement('option');
@@ -2607,7 +2712,7 @@ const Actions = (() => {
     renderValue();
   }
 
-  return { STANDARD, SHORTCUTS, KEYBOARD_TYPES, typeOf, label, buildEditor };
+  return { STANDARD, SHORTCUTS, SHORTCUT_PAIRS, SHORTCUT_LABELS, KEYBOARD_TYPES, typeOf, label, buildEditor };
 })();
 
 </script>
@@ -2622,23 +2727,23 @@ const Inspector = (() => {
 
   // ============ 样式编辑器 ============
   const STYLE_TYPES = [
-    ['geometry', 'geometry — 原生绘制(颜色/圆角/边框/阴影)'],
-    ['text', 'text — 文本'],
-    ['fileImage', 'fileImage — 皮肤图片'],
-    ['systemImage', 'systemImage — 系统图标(SF Symbols)'],
-    ['assetImage', 'assetImage — 应用内置图片'],
+    ['geometry', '纯色/渐变（颜色·圆角·边框·阴影）'],
+    ['text', '文字'],
+    ['fileImage', '皮肤图片（你自己放的 PNG）'],
+    ['systemImage', '系统图标（苹果 SF Symbols）'],
+    ['assetImage', '应用内置图片'],
   ];
 
   const CONTENT_MODES = [
-    ['', '(默认)'],
-    ['scaleToFill', '拉伸填充 scaleToFill'],
-    ['scaleAspectFit', '等比适应 scaleAspectFit'],
-    ['scaleAspectFill', '等比填充 scaleAspectFill'],
-    ['center', '居中 center'],
+    ['', '（默认）'],
+    ['scaleToFill', '拉伸填满（可能变形）'],
+    ['scaleAspectFit', '等比缩放·完整显示（可能留白）'],
+    ['scaleAspectFill', '等比缩放·填满（可能裁掉边）'],
+    ['center', '原始大小·居中'],
   ];
 
   const FONT_WEIGHTS = [
-    ['', '(默认)'], ['ultraLight', '极细'], ['thin', '纤细'], ['light', '细'],
+    ['', '（默认）'], ['ultraLight', '极细'], ['thin', '纤细'], ['light', '细'],
     ['regular', '常规'], ['medium', '中等'], ['semibold', '半粗'], ['bold', '粗体'],
     ['heavy', '特粗'], ['black', '最粗'],
   ];
@@ -2649,41 +2754,46 @@ const Inspector = (() => {
   }
 
   // 渐变色（颜色数组）编辑
-  function gradientInput(doc, style, key, rerender) {
+  // 修改按“样式名字”写入：开着「明暗同步改」时，浅色/深色里的同名样式一起更新
+  function gradientInput(doc, styleName, key) {
     const wrap = el('div', 'grad-inp');
+    const editStyle = mut => App.edit(d => {
+      const st = d[styleName];
+      if (st && typeof st === 'object') mut(st);
+    });
     function draw() {
       wrap.innerHTML = '';
-      let v = style[key];
+      const style = doc[styleName] || {};
+      const v = style[key];
       const arr = v == null ? [] : (Array.isArray(v) ? v : [v]);
       arr.forEach((c, i) => {
         const row = el('div', 'grad-row');
         row.appendChild(colorInput(c, nv => {
-          App.edit(d => {
-            const st = d === doc ? style : d[styleNameOf(doc, style)] || style;
+          editStyle(st => {
             const a = Array.isArray(st[key]) ? st[key] : (st[key] != null ? [st[key]] : []);
             if (nv == null) a.splice(i, 1); else a[i] = nv;
-            st[key] = a.length === 0 ? undefined : (a.length === 1 ? a[0] : a);
-            if (st[key] === undefined) delete st[key];
+            if (a.length === 0) delete st[key];
+            else st[key] = a.length === 1 ? a[0] : a;
           });
           draw();
         }));
         const del = button('✕', () => {
-          App.edit(() => {
-            const a = Array.isArray(style[key]) ? style[key] : [style[key]];
+          editStyle(st => {
+            const a = Array.isArray(st[key]) ? st[key] : (st[key] != null ? [st[key]] : []);
             a.splice(i, 1);
-            if (a.length === 0) delete style[key];
-            else style[key] = a.length === 1 ? a[0] : a;
+            if (a.length === 0) delete st[key];
+            else st[key] = a.length === 1 ? a[0] : a;
           });
           draw();
         }, 'mini-btn');
         row.appendChild(del);
         wrap.appendChild(row);
       });
-      const add = button('＋ 加一个颜色（多色为渐变）', () => {
-        App.edit(() => {
-          const a = style[key] == null ? [] : (Array.isArray(style[key]) ? style[key] : [style[key]]);
+      const add = button('＋ 加一个颜色（两个以上颜色=渐变过渡）', () => {
+        editStyle(st => {
+          const a = st[key] == null ? [] : (Array.isArray(st[key]) ? st[key] : [st[key]]);
           a.push('#888888');
-          style[key] = a.length === 1 ? a[0] : a;
+          st[key] = a.length === 1 ? a[0] : a;
         });
         draw();
       }, 'btn small');
@@ -2820,10 +2930,59 @@ const Inspector = (() => {
     return wrap;
   }
 
+  // 常用 SF Symbols（苹果内置图标）中文对照：[图标名, 中文说明]
+  const SF_COMMON = [
+    ['delete.left', '删除键 ⌫'], ['delete.left.fill', '删除键（实心）'],
+    ['shift', 'Shift 上档 ⇧'], ['shift.fill', 'Shift（按下）'], ['capslock', '大写锁定 ⇪'], ['capslock.fill', '大写锁定（实心）'],
+    ['globe', '切换输入法 🌐'], ['keyboard', '键盘'], ['keyboard.chevron.compact.down', '收起键盘'],
+    ['return', '回车 ⏎'], ['space', '空格'], ['mic', '麦克风 / 听写'], ['mic.fill', '麦克风（实心）'],
+    ['face.smiling', '笑脸 / 表情'], ['gearshape', '设置齿轮'], ['magnifyingglass', '搜索放大镜'],
+    ['arrow.up', '箭头 上'], ['arrow.down', '箭头 下'], ['arrow.left', '箭头 左'], ['arrow.right', '箭头 右'],
+    ['chevron.up', '尖角 上'], ['chevron.down', '尖角 下'], ['chevron.left', '尖角 左'], ['chevron.right', '尖角 右'],
+    ['xmark', '关闭 ✕'], ['ellipsis', '更多 ⋯'], ['list.bullet', '列表'], ['square.grid.2x2', '四宫格菜单'],
+    ['doc.on.doc', '复制'], ['doc.on.clipboard', '剪贴板 / 粘贴'], ['paperplane', '发送 ➤'],
+    ['textformat', '字体 Aa'], ['textformat.123', '数字 123'], ['textformat.abc', '字母 abc'],
+    ['plus', '加号'], ['minus', '减号'], ['pencil', '铅笔 / 编辑'], ['scissors', '剪切'],
+    ['trash', '垃圾桶'], ['arrow.uturn.left', '撤销 ↩'], ['arrow.uturn.right', '重做 ↪'],
+    ['arrow.left.arrow.right', '左右互换 ⇆'], ['sun.max', '太阳'], ['moon', '月亮'],
+    ['star', '星星'], ['star.fill', '星星（实心）'], ['heart', '爱心'], ['heart.fill', '爱心（实心）'],
+    ['hand.thumbsup', '点赞'], ['translate', '翻译'], ['photo', '图片'], ['sparkles', '星光 ✦'],
+    ['cloud', '云朵'], ['flame', '火焰'], ['leaf', '叶子'], ['bookmark', '书签'], ['quotelevel', '引号'],
+  ];
+
+  // 图标选择弹窗：中文名 + 近似字形，点选即填入
+  function openSFPicker(cb) {
+    const m = UI.modal('选一个苹果内置图标（SF Symbols）', '500px');
+    const inp = el('input'); inp.type = 'text'; inp.placeholder = '搜索中文或英文名…'; inp.style.width = '100%';
+    const grid = el('div', 'sf-grid');
+    function draw() {
+      grid.innerHTML = '';
+      const q = inp.value.trim().toLowerCase();
+      for (const [name, zh] of SF_COMMON) {
+        if (q && !name.toLowerCase().includes(q) && !zh.toLowerCase().includes(q)) continue;
+        const b = button('', () => { m.close(); cb(name); }, 'sf-item');
+        const glyph = Renderer.sfGlyph(name) || '·';
+        b.innerHTML = `<span class="sf-glyph">${glyph}</span><span class="sf-zh">${zh}</span><span class="sf-name">${name}</span>`;
+        grid.appendChild(b);
+      }
+    }
+    inp.oninput = draw;
+    m.body.appendChild(inp);
+    m.body.appendChild(grid);
+    m.body.appendChild(el('div', 'hint-line', '这里只列出键盘常用图标。苹果全部图标可在「SF Symbols」App 查名字，直接填进输入框也行。\n预览里用近似字符表示，真机上显示的是苹果官方图标。'));
+    draw();
+  }
+
   // 完整样式对象编辑器（styleName 是 doc 中的键）
+  // 所有修改都按“样式名字”写入两种模式：开着「明暗同步改」时，深色模式同名样式一起更新，
+  // 手机夜间模式不再丢修改
   function buildStyleEditor(container, doc, styleName) {
     container.innerHTML = '';
     let style = doc[styleName];
+    const editStyle = mut => App.edit(d => {
+      const st = d[styleName];
+      if (st && typeof st === 'object') mut(st);
+    });
     if (!style || typeof style !== 'object') {
       const p = el('div', 'hint-line', `样式 "${styleName}" 不存在`);
       const b = button('创建这个样式', () => {
@@ -2835,66 +2994,74 @@ const Inspector = (() => {
     }
 
     const typeSel = selectInput(style.buttonStyleType || 'geometry', STYLE_TYPES, v => {
-      App.edit(() => { style.buttonStyleType = v; });
+      editStyle(st => { st.buttonStyleType = v; });
       buildStyleEditor(container, doc, styleName);
     });
     container.appendChild(field('样式类型', typeSel));
 
     const type = style.buttonStyleType || 'geometry';
 
-    container.appendChild(field('内边距 insets', insetsInput(style.insets, v => App.edit(() => set(style, 'insets', v)))));
+    container.appendChild(field('内边距 insets（四周留白，按键间隙就是这么来的）', insetsInput(style.insets, v => editStyle(st => set(st, 'insets', v)))));
 
     if (type === 'geometry') {
-      container.appendChild(field('常态颜色（可多色渐变）', gradientInput(doc, style, 'normalColor')));
-      container.appendChild(field('按下颜色', gradientInput(doc, style, 'highlightColor')));
-      container.appendChild(field('圆角半径', numInput(style.cornerRadius, v => App.edit(() => set(style, 'cornerRadius', v)), { step: 0.5, min: 0 })));
-      container.appendChild(field('边框宽度', numInput(style.borderSize, v => App.edit(() => set(style, 'borderSize', v)), { step: 0.5, min: 0 })));
-      container.appendChild(field('常态边框色', colorInput(style.normalBorderColor, v => App.edit(() => set(style, 'normalBorderColor', v)))));
-      container.appendChild(field('按下边框色', colorInput(style.highlightBorderColor, v => App.edit(() => set(style, 'highlightBorderColor', v)))));
-      container.appendChild(field('常态底边色(3D)', colorInput(style.normalLowerEdgeColor, v => App.edit(() => set(style, 'normalLowerEdgeColor', v)))));
-      container.appendChild(field('按下底边色(3D)', colorInput(style.highlightLowerEdgeColor, v => App.edit(() => set(style, 'highlightLowerEdgeColor', v)))));
-      container.appendChild(field('常态阴影色', colorInput(style.normalShadowColor, v => App.edit(() => set(style, 'normalShadowColor', v)))));
-      container.appendChild(field('按下阴影色', colorInput(style.highlightShadowColor, v => App.edit(() => set(style, 'highlightShadowColor', v)))));
-      container.appendChild(field('阴影透明度 0~1', numInput(style.shadowOpacity, v => App.edit(() => set(style, 'shadowOpacity', v)), { step: 0.05, min: 0, max: 1 })));
-      container.appendChild(field('阴影模糊半径', numInput(style.shadowRadius, v => App.edit(() => set(style, 'shadowRadius', v)), { step: 0.5, min: 0 })));
-      container.appendChild(field('阴影偏移', pointInput(style.shadowOffset ? { ...style.shadowOffset } : null, v => App.edit(() => set(style, 'shadowOffset', v)))));
+      container.appendChild(field('常态颜色（加多个颜色=渐变）', gradientInput(doc, styleName, 'normalColor')));
+      container.appendChild(field('按下颜色（手指按住时显示）', gradientInput(doc, styleName, 'highlightColor')));
+      container.appendChild(field('圆角半径（越大越圆润）', numInput(style.cornerRadius, v => editStyle(st => set(st, 'cornerRadius', v)), { step: 0.5, min: 0 })));
+      container.appendChild(field('边框宽度', numInput(style.borderSize, v => editStyle(st => set(st, 'borderSize', v)), { step: 0.5, min: 0 })));
+      container.appendChild(field('常态边框色', colorInput(style.normalBorderColor, v => editStyle(st => set(st, 'normalBorderColor', v)))));
+      container.appendChild(field('按下边框色', colorInput(style.highlightBorderColor, v => editStyle(st => set(st, 'highlightBorderColor', v)))));
+      container.appendChild(field('常态底边色（键底一条 3D 立体边）', colorInput(style.normalLowerEdgeColor, v => editStyle(st => set(st, 'normalLowerEdgeColor', v)))));
+      container.appendChild(field('按下底边色（3D）', colorInput(style.highlightLowerEdgeColor, v => editStyle(st => set(st, 'highlightLowerEdgeColor', v)))));
+      container.appendChild(field('常态阴影色', colorInput(style.normalShadowColor, v => editStyle(st => set(st, 'normalShadowColor', v)))));
+      container.appendChild(field('按下阴影色', colorInput(style.highlightShadowColor, v => editStyle(st => set(st, 'highlightShadowColor', v)))));
+      container.appendChild(field('阴影透明度 0~1', numInput(style.shadowOpacity, v => editStyle(st => set(st, 'shadowOpacity', v)), { step: 0.05, min: 0, max: 1 })));
+      container.appendChild(field('阴影模糊半径', numInput(style.shadowRadius, v => editStyle(st => set(st, 'shadowRadius', v)), { step: 0.5, min: 0 })));
+      container.appendChild(field('阴影偏移（x 往右 / y 往下）', pointInput(style.shadowOffset ? { ...style.shadowOffset } : null, v => editStyle(st => set(st, 'shadowOffset', v)))));
       const gradSec = section('渐变高级设置', false);
-      gradSec.body.appendChild(field('渐变类型', selectInput(style.colorGradientType || '', [['', '(线性)'], ['axial', '线性 axial'], ['radial', '辐射 radial'], ['conic', '锥形 conic']], v => App.edit(() => set(style, 'colorGradientType', v)))));
-      gradSec.body.appendChild(field('渐变起点(0~1)', pointInput(style.colorStartPoint ? { ...style.colorStartPoint } : null, v => App.edit(() => set(style, 'colorStartPoint', v)))));
-      gradSec.body.appendChild(field('渐变终点(0~1)', pointInput(style.colorEndPoint ? { ...style.colorEndPoint } : null, v => App.edit(() => set(style, 'colorEndPoint', v)))));
-      gradSec.body.appendChild(field('颜色位置数组', textInput((style.colorLocation || []).join(', '), v => App.edit(() => {
+      gradSec.body.appendChild(field('渐变类型', selectInput(style.colorGradientType || '', [['', '（线性·默认）'], ['axial', '线性 axial（直线过渡）'], ['radial', '辐射 radial（从中心向外）'], ['conic', '锥形 conic（绕圈过渡）']], v => editStyle(st => set(st, 'colorGradientType', v)))));
+      gradSec.body.appendChild(field('渐变起点（0~1，左上角是 0,0）', pointInput(style.colorStartPoint ? { ...style.colorStartPoint } : null, v => editStyle(st => set(st, 'colorStartPoint', v)))));
+      gradSec.body.appendChild(field('渐变终点（0~1，右下角是 1,1）', pointInput(style.colorEndPoint ? { ...style.colorEndPoint } : null, v => editStyle(st => set(st, 'colorEndPoint', v)))));
+      gradSec.body.appendChild(field('颜色位置数组（每个颜色停在哪，0~1）', textInput((style.colorLocation || []).join(', '), v => editStyle(st => {
         const arr = v.split(',').map(s => parseFloat(s)).filter(n => isFinite(n));
-        set(style, 'colorLocation', arr.length ? arr : null);
+        set(st, 'colorLocation', arr.length ? arr : null);
       }), '如 0, 0.5, 1')));
       container.appendChild(gradSec.root);
     } else if (type === 'text') {
-      container.appendChild(field('文本内容', textInput(style.text, v => App.edit(() => set(style, 'text', v)), '支持 $rimePreedit 等变量')));
-      const vars = el('div', 'hint-line', '特殊变量：$rimePreedit 预编辑 / $rimeCandidate 首选字 / $rimeCandidateComment 注释 / $rimeSchemaName 方案名 / $returnKeyType 回车键文本');
+      container.appendChild(field('文本内容', textInput(style.text, v => editStyle(st => set(st, 'text', v)), '支持 $rimePreedit 等变量')));
+      const vars = el('div', 'hint-line', '特殊变量（写进文本会自动被替换）：\n$rimePreedit 正在打的拼音 / $rimeCandidate 第一个候选词 / $rimeCandidateComment 候选词注释\n$rimeSchemaName 输入方案名 / $returnKeyType 回车键文字（发送/搜索…随 App 变）');
       container.appendChild(vars);
-      container.appendChild(field('字号', numInput(style.fontSize, v => App.edit(() => set(style, 'fontSize', v)), { step: 0.5, min: 1 })));
-      container.appendChild(field('字重', selectInput(typeof style.fontWeight === 'string' ? style.fontWeight : '', FONT_WEIGHTS, v => App.edit(() => set(style, 'fontWeight', v)))));
-      container.appendChild(field('常态文字色', colorInput(style.normalColor, v => App.edit(() => set(style, 'normalColor', v)))));
-      container.appendChild(field('按下文字色', colorInput(style.highlightColor, v => App.edit(() => set(style, 'highlightColor', v)))));
-      container.appendChild(field('位置微调 center(0~1)', pointInput(style.center ? { ...style.center } : null, v => App.edit(() => set(style, 'center', v)))));
+      container.appendChild(field('字号', numInput(style.fontSize, v => editStyle(st => set(st, 'fontSize', v)), { step: 0.5, min: 1 })));
+      container.appendChild(field('字重（笔画粗细）', selectInput(typeof style.fontWeight === 'string' ? style.fontWeight : '', FONT_WEIGHTS, v => editStyle(st => set(st, 'fontWeight', v)))));
+      container.appendChild(field('常态文字色', colorInput(style.normalColor, v => editStyle(st => set(st, 'normalColor', v)))));
+      container.appendChild(field('按下文字色', colorInput(style.highlightColor, v => editStyle(st => set(st, 'highlightColor', v)))));
+      container.appendChild(field('位置微调 center（0~1，0.5,0.5=正中）', pointInput(style.center ? { ...style.center } : null, v => editStyle(st => set(st, 'center', v)))));
     } else if (type === 'fileImage') {
-      container.appendChild(field('常态图片', imagePicker(style.normalImage, v => App.edit(() => set(style, 'normalImage', v)))));
-      container.appendChild(field('按下图片', imagePicker(style.highlightImage, v => App.edit(() => set(style, 'highlightImage', v)))));
-      container.appendChild(field('显示模式', selectInput(style.contentMode || '', CONTENT_MODES, v => App.edit(() => set(style, 'contentMode', v)))));
-      container.appendChild(field('位置微调 center(0~1)', pointInput(style.center ? { ...style.center } : null, v => App.edit(() => set(style, 'center', v)))));
+      container.appendChild(field('常态图片', imagePicker(style.normalImage, v => editStyle(st => set(st, 'normalImage', v)))));
+      container.appendChild(field('按下图片', imagePicker(style.highlightImage, v => editStyle(st => set(st, 'highlightImage', v)))));
+      container.appendChild(field('显示模式（图片怎么塞进按键）', selectInput(style.contentMode || '', CONTENT_MODES, v => editStyle(st => set(st, 'contentMode', v)))));
+      container.appendChild(field('位置微调 center（0~1）', pointInput(style.center ? { ...style.center } : null, v => editStyle(st => set(st, 'center', v)))));
     } else if (type === 'systemImage') {
-      container.appendChild(field('SF 图标名称', textInput(style.systemImageName, v => App.edit(() => set(style, 'systemImageName', v)), '如 delete.left')));
-      container.appendChild(field('按下时图标', textInput(style.highlightSystemImageName, v => App.edit(() => set(style, 'highlightSystemImageName', v)))));
-      container.appendChild(field('图标大小', numInput(style.fontSize, v => App.edit(() => set(style, 'fontSize', v)), { step: 0.5, min: 1 })));
-      container.appendChild(field('粗细', selectInput(typeof style.fontWeight === 'string' ? style.fontWeight : '', FONT_WEIGHTS, v => App.edit(() => set(style, 'fontWeight', v)))));
-      container.appendChild(field('常态颜色', colorInput(style.normalColor, v => App.edit(() => set(style, 'normalColor', v)))));
-      container.appendChild(field('按下颜色', colorInput(style.highlightColor, v => App.edit(() => set(style, 'highlightColor', v)))));
-      container.appendChild(field('显示模式', selectInput(style.contentMode || '', CONTENT_MODES, v => App.edit(() => set(style, 'contentMode', v)))));
+      const sfBox = el('div');
+      sfBox.appendChild(textInput(style.systemImageName, v => editStyle(st => set(st, 'systemImageName', v)), '如 delete.left'));
+      sfBox.appendChild(button('🔍 从常用图标选（带中文对照）', () => {
+        openSFPicker(name => {
+          editStyle(st => set(st, 'systemImageName', name));
+          buildStyleEditor(container, doc, styleName);
+        });
+      }, 'btn small'));
+      container.appendChild(field('SF 图标名称（苹果内置图标）', sfBox));
+      container.appendChild(field('按下时换成的图标', textInput(style.highlightSystemImageName, v => editStyle(st => set(st, 'highlightSystemImageName', v)), '留空=不换')));
+      container.appendChild(field('图标大小', numInput(style.fontSize, v => editStyle(st => set(st, 'fontSize', v)), { step: 0.5, min: 1 })));
+      container.appendChild(field('粗细', selectInput(typeof style.fontWeight === 'string' ? style.fontWeight : '', FONT_WEIGHTS, v => editStyle(st => set(st, 'fontWeight', v)))));
+      container.appendChild(field('常态颜色', colorInput(style.normalColor, v => editStyle(st => set(st, 'normalColor', v)))));
+      container.appendChild(field('按下颜色', colorInput(style.highlightColor, v => editStyle(st => set(st, 'highlightColor', v)))));
+      container.appendChild(field('显示模式', selectInput(style.contentMode || '', CONTENT_MODES, v => editStyle(st => set(st, 'contentMode', v)))));
       container.appendChild(el('div', 'hint-line', '预览中 SF 图标用近似字符显示，真机效果以 iOS 为准'));
     } else if (type === 'assetImage') {
-      container.appendChild(field('内置图片名称', textInput(style.assetImageName, v => App.edit(() => set(style, 'assetImageName', v)))));
-      container.appendChild(field('常态颜色', colorInput(style.normalColor, v => App.edit(() => set(style, 'normalColor', v)))));
-      container.appendChild(field('按下颜色', colorInput(style.highlightColor, v => App.edit(() => set(style, 'highlightColor', v)))));
-      container.appendChild(field('显示模式', selectInput(style.contentMode || '', CONTENT_MODES, v => App.edit(() => set(style, 'contentMode', v)))));
+      container.appendChild(field('内置图片名称（元书 App 自带的图片）', textInput(style.assetImageName, v => editStyle(st => set(st, 'assetImageName', v)))));
+      container.appendChild(field('常态颜色', colorInput(style.normalColor, v => editStyle(st => set(st, 'normalColor', v)))));
+      container.appendChild(field('按下颜色', colorInput(style.highlightColor, v => editStyle(st => set(st, 'highlightColor', v)))));
+      container.appendChild(field('显示模式', selectInput(style.contentMode || '', CONTENT_MODES, v => editStyle(st => set(st, 'contentMode', v)))));
     }
 
     // 原始 YAML
@@ -2916,20 +3083,27 @@ const Inspector = (() => {
   }
 
   // ============ 样式引用编辑（string | [string] | 条件样式） ============
+  // opts.resolveOwner(d)：在任一模式的文档 d 里找到同一个宿主对象。
+  // 提供它之后，引用的增删改会同步写进浅色和深色两份文件；不提供则只改当前模式。
   function styleRefEditor(container, doc, owner, key, opts = {}) {
     container.innerHTML = '';
+    const resolveOwner = opts.resolveOwner || (d => (d === doc ? owner : null));
+    const editOwner = mut => App.edit(d => {
+      const o = resolveOwner(d);
+      if (o && typeof o === 'object') mut(o);
+    });
     const ref = owner[key];
     const isCondition = Array.isArray(ref) && ref.some(x => x && typeof x === 'object');
 
     if (isCondition) {
-      const hint = el('div', 'hint-line', '这是「条件样式」，用 YAML 直接编辑：');
+      const hint = el('div', 'hint-line', '这是「条件样式」（按条件切换样式的高级写法），用 YAML 直接编辑：');
       container.appendChild(hint);
       const ta = el('textarea', 'raw-ta'); ta.rows = 6;
       ta.value = SkinModel.yamlDump(ref);
       ta.onchange = () => {
         try {
           const v = jsyaml.load(ta.value);
-          App.edit(() => { owner[key] = v; });
+          editOwner(o => { o[key] = v; });
           ta.classList.remove('err');
         } catch (e) { ta.classList.add('err'); }
       };
@@ -2940,10 +3114,10 @@ const Inspector = (() => {
     const names = ref == null ? [] : (Array.isArray(ref) ? [...ref] : [ref]);
 
     function commitNames(list) {
-      App.edit(() => {
-        if (!list.length) delete owner[key];
-        else if (list.length === 1 && !opts.forceArray) owner[key] = list[0];
-        else owner[key] = list;
+      editOwner(o => {
+        if (!list.length) delete o[key];
+        else if (list.length === 1 && !opts.forceArray) o[key] = list[0];
+        else o[key] = [...list];
       });
       styleRefEditor(container, doc, owner, key, opts);
     }
@@ -3017,7 +3191,9 @@ const Inspector = (() => {
   }
 
   // ============ 动作字段编辑 ============
-  function actionField(container, doc, owner, key, labelText) {
+  // resolveOwner(d)：在任一模式文档里找到同一宿主对象，动作修改会同步浅色+深色
+  function actionField(container, doc, owner, key, labelText, resolveOwner) {
+    const resolve = resolveOwner || (d => (d === doc ? owner : null));
     const wrap = el('div', 'act-field');
     const head = el('div', 'act-head');
     head.appendChild(el('span', 'fld-label', labelText));
@@ -3026,9 +3202,11 @@ const Inspector = (() => {
     const box = el('div', 'act-box');
     wrap.appendChild(box);
     Actions.buildEditor(box, owner[key], v => {
-      App.edit(() => {
-        if (v == null) delete owner[key];
-        else owner[key] = v;
+      App.edit(d => {
+        const o = resolve(d);
+        if (!o || typeof o !== 'object') return;
+        if (v == null) delete o[key];
+        else o[key] = JSON.parse(JSON.stringify(v));
       });
       head.querySelector('.act-cur').textContent = Actions.label(owner[key]);
     });
@@ -3342,38 +3520,195 @@ const Inspector = (() => {
     draw();
   }
 
-  // ============ 长按符号 hintSymbolsStyle 编辑 ============
+  // ============ 长按符号面板 hintSymbolsStyle 编辑 ============
+  // 对应官方文档 guides/skins/hintsymbolsgrid（长按符号面板）：
+  // 手指按住按键不放 → 键上方弹出符号面板 → 滑到想要的符号上松手输入。
+  // 符号多时自动换行排成网格；兼容旧版属性名 holdSymbolsStyle 并支持一键迁移。
   function hintSymbolsEditor(container, doc, def) {
     container.innerHTML = '';
-    const refName = typeof def.hintSymbolsStyle === 'string' ? def.hintSymbolsStyle : null;
-    if (!def.hintSymbolsStyle) {
-      container.appendChild(button('＋为这个键添加长按符号面板', () => {
-        const base = (App.selection || 'key') + 'HintSymbolsStyle';
-        let n = base, i = 2;
-        while (doc[n]) n = base + i++;
+    const keyName = App.selection;
+
+    // 定位面板：新版 hintSymbolsStyle 优先，旧版 holdSymbolsStyle 兜底
+    const propOf = dd => (dd && dd.hintSymbolsStyle != null) ? 'hintSymbolsStyle'
+      : ((dd && dd.holdSymbolsStyle != null) ? 'holdSymbolsStyle' : null);
+    const panelOf = d => {
+      const dd = d[keyName];
+      const p = propOf(dd);
+      if (!p) return null;
+      const ref = dd[p];
+      return typeof ref === 'string' ? d[ref] : ref;
+    };
+    // 面板修改按名字同步写进浅色+深色两份文件
+    const editPanel = mut => App.edit(d => {
+      const hs2 = panelOf(d);
+      if (hs2 && typeof hs2 === 'object') mut(hs2, d);
+    });
+    const isDarkDoc = d => d === SkinModel.model.docs.dark[Renderer.state.docName];
+    const redraw = () => hintSymbolsEditor(container, doc, doc[keyName] || def);
+
+    // 生成两种模式下都不冲突的新名字
+    const mkNamer = () => {
+      const m0 = SkinModel.model;
+      const taken = new Set([
+        ...Object.keys(m0.docs.light[Renderer.state.docName] || {}),
+        ...Object.keys(m0.docs.dark[Renderer.state.docName] || {}),
+      ]);
+      return base => { let n = base, i = 2; while (taken.has(n)) n = base + i++; taken.add(n); return n; };
+    };
+
+    // 把一串字符拆成符号数组：有空格按空格分（支持多字符符号），否则一个字一个符号
+    const splitSymbols = s => {
+      s = String(s == null ? '' : s).trim();
+      if (!s) return [];
+      if (/\s/.test(s)) return s.split(/\s+/).filter(Boolean);
+      return [...s];
+    };
+
+    // 批量添加符号（自动建好前景样式，小白不用碰"样式"概念）
+    function addSymbols(chars) {
+      if (!chars.length) return;
+      const mk = mkNamer();
+      const baseCount = ((panelOf(doc) || {}).symbolStyles || []).length;
+      const items = chars.map((ch, idx) => {
+        const symN = mk(`${keyName || 'key'}HintSym${baseCount + idx + 1}`);
+        return { ch, symN, fgN: mk(symN + 'Fg') };
+      });
+      App.edit(d => {
+        const hs2 = panelOf(d);
+        if (!hs2) return;
+        const dark = isDarkDoc(d);
+        for (const it of items) {
+          d[it.fgN] = { buttonStyleType: 'text', text: it.ch, fontSize: 18, normalColor: dark ? '#ffffff' : '#000000' };
+          d[it.symN] = { action: { symbol: it.ch }, foregroundStyle: it.fgN };
+          hs2.symbolStyles = hs2.symbolStyles || [];
+          hs2.symbolStyles.push(it.symN);
+        }
+      });
+      // 自动打开长按预览，立刻能看到效果
+      Renderer.state.showHints = true;
+      const chk = document.getElementById('chkHints');
+      if (chk) chk.checked = true;
+      App.renderPreview();
+      redraw();
+      toast(`已添加 ${items.length} 个符号，预览里正显示这个面板`);
+    }
+
+    function openBatchAdd() {
+      const m = UI.modal('添加长按符号', '460px');
+      m.body.appendChild(el('div', 'hint-line',
+        '想加什么符号就直接打出来，一个字算一个符号。\n如输入 ！？…～ 会一次加 4 个。多字符符号（如 :-)）之间用空格分开。'));
+      const inp = el('input'); inp.type = 'text'; inp.style.width = '100%'; inp.placeholder = '如：！？…～';
+      m.body.appendChild(inp);
+      const presets = [
+        ['中文标点', '，。？！…：；～'],
+        ['英文标点', ',.?!\'";:'],
+        ['括号书名号', '（）「」《》【】'],
+        ['数字', '1234567890'],
+        ['货币符号', '￥$€£%°'],
+        ['a 的注音', 'àáǎâā'],
+        ['e 的注音', 'èéěêē'],
+      ];
+      const rowP = el('div');
+      for (const [lab, s] of presets) {
+        rowP.appendChild(button(lab, () => { inp.value = s; }, 'btn small'));
+      }
+      m.body.appendChild(field('快捷模板（点一下填入，可再改）', rowP));
+      m.body.appendChild(button('✓ 添加这些符号', () => {
+        const chars = splitSymbols(inp.value);
+        if (!chars.length) { toast('还没输入符号', true); return; }
+        m.close();
+        addSymbols(chars);
+      }, 'btn primary'));
+    }
+
+    // 给面板配一套好看的默认样式（白底圆角+蓝色选中），一键完成
+    function beautifyPanel() {
+      const mk = mkNamer();
+      const bgN = mk((keyName || 'key') + 'HintPanelBg');
+      const selN = mk((keyName || 'key') + 'HintPanelSel');
+      App.edit(d => {
+        const hs2 = panelOf(d);
+        if (!hs2) return;
+        const dark = isDarkDoc(d);
+        d[bgN] = {
+          buttonStyleType: 'geometry', cornerRadius: 9,
+          normalColor: dark ? '#3a3a3c' : '#ffffff',
+          normalBorderColor: dark ? '#00000066' : '#00000022', borderSize: 0.5,
+          normalShadowColor: '#00000088', shadowRadius: 8, shadowOpacity: 0.35, shadowOffset: { x: 0, y: 2 },
+        };
+        d[selN] = {
+          buttonStyleType: 'geometry', cornerRadius: 7,
+          insets: { top: 4, bottom: 4, left: 3, right: 3 },
+          normalColor: dark ? '#0a84ff' : '#3478f6',
+        };
+        hs2.backgroundStyle = bgN;
+        hs2.selectedBackgroundStyle = selN;
+        if (!hs2.size) hs2.size = { width: 38, height: 48 };
+      });
+      redraw();
+      toast('面板已配好默认样式（可在下面继续微调）');
+    }
+
+    const prop = propOf(def);
+
+    if (!prop) {
+      container.appendChild(button('＋给这个键加「长按符号面板」', () => {
+        const mk = mkNamer();
+        const n = mk((keyName || 'key') + 'HintSymbolsStyle');
         App.edit(d => {
-          d[n] = { size: { width: 40, height: 50 }, selectedIndex: 0, symbolStyles: [] };
-          def.hintSymbolsStyle = n;
+          const dd = d[keyName];
+          if (!dd) return;
+          d[n] = { size: { width: 38, height: 48 }, selectedIndex: 0, symbolStyles: [] };
+          dd.hintSymbolsStyle = n;
         });
-        hintSymbolsEditor(container, doc, def);
+        redraw();
+        // 顺手把面板底子配好，再引导去加符号
+        beautifyPanel();
       }, 'btn small'));
+      container.appendChild(el('div', 'hint-line',
+        '加上后：手机上按住这个键不放会弹出一排符号，滑过去松手即可输入（比如按住句号弹出 ？！…）。'));
       return;
     }
-    const hs = refName ? doc[refName] : def.hintSymbolsStyle;
+
+    // 旧版属性名迁移提示
+    if (prop === 'holdSymbolsStyle') {
+      container.appendChild(el('div', 'hint-line warn',
+        '⚠ 这个键用的是旧版仓输入法的属性名 holdSymbolsStyle，元书（v3）不识别。'));
+      container.appendChild(button('一键改成新版名字 hintSymbolsStyle', () => {
+        App.edit(d => {
+          const dd = d[keyName];
+          if (dd && dd.holdSymbolsStyle != null && dd.hintSymbolsStyle == null) {
+            dd.hintSymbolsStyle = dd.holdSymbolsStyle;
+            delete dd.holdSymbolsStyle;
+          }
+        });
+        redraw();
+        toast('已改为 hintSymbolsStyle（新版）');
+      }, 'btn small'));
+    }
+
+    const refName = typeof def[prop] === 'string' ? def[prop] : null;
+    const hs = refName ? doc[refName] : def[prop];
     if (!hs) { container.appendChild(el('div', 'hint-line', `样式 ${refName} 不存在`)); return; }
 
-    container.appendChild(field('单格宽度', numInput(hs.size && hs.size.width, v => App.edit(() => { hs.size = hs.size || {}; hs.size.width = v; }), { step: 1 })));
-    container.appendChild(field('单格高度', numInput(hs.size && hs.size.height, v => App.edit(() => { hs.size = hs.size || {}; hs.size.height = v; }), { step: 1 })));
-    container.appendChild(field('默认选中第几个(从0起)', numInput(hs.selectedIndex, v => App.edit(() => set(hs, 'selectedIndex', v)), { step: 1, min: 0 })));
+    container.appendChild(el('div', 'hint-line',
+      '手机上：按住这个键不放 → 弹出面板 → 滑到符号上松手输入。\n符号很多时会自动换行排成网格。想在预览里看：勾选顶栏「长按预览」并选中此键。'));
+
+    container.appendChild(field('每格宽度（官方新增 size 参数）', numInput(hs.size && hs.size.width, v => editPanel(h => { h.size = h.size || {}; if (v == null) delete h.size.width; else h.size.width = v; }), { step: 1, min: 10 })));
+    container.appendChild(field('每格高度', numInput(hs.size && hs.size.height, v => editPanel(h => { h.size = h.size || {}; if (v == null) delete h.size.height; else h.size.height = v; }), { step: 1, min: 10 })));
+    container.appendChild(field('默认选中第几个（0=第一个）', numInput(hs.selectedIndex, v => editPanel(h => set(h, 'selectedIndex', v)), { step: 1, min: 0 })));
+
+    container.appendChild(button('✨ 一键美化面板（白底圆角+蓝色选中）', beautifyPanel, 'btn small'));
+
     const bgBox = el('div');
     container.appendChild(field('面板背景样式', bgBox));
-    styleRefEditor(bgBox, doc, hs, 'backgroundStyle', { baseName: 'hintSymbolsBackground' });
+    styleRefEditor(bgBox, doc, hs, 'backgroundStyle', { baseName: 'hintSymbolsBackground', resolveOwner: panelOf });
     const selBox = el('div');
-    container.appendChild(field('选中格背景样式', selBox));
-    styleRefEditor(selBox, doc, hs, 'selectedBackgroundStyle', { baseName: 'hintSymbolsSelected' });
+    container.appendChild(field('选中格背景样式（滑到哪格哪格亮）', selBox));
+    styleRefEditor(selBox, doc, hs, 'selectedBackgroundStyle', { baseName: 'hintSymbolsSelected', resolveOwner: panelOf });
 
     const listWrap = el('div', 'hs-list');
-    container.appendChild(el('div', 'fld-label', '符号列表：'));
+    container.appendChild(el('div', 'fld-label', '符号列表（顺序=面板里从左到右）：'));
     container.appendChild(listWrap);
 
     function drawList() {
@@ -3385,36 +3720,62 @@ const Inspector = (() => {
         const text = sdef ? Actions.label(sdef.action) : '（缺失）';
         row.appendChild(button(`${i + 1}. ${text}`, () => {
           if (!sdef) return;
+          const symOwner = typeof sn === 'string' ? (d => d[sn]) : (d => (d === doc ? sdef : null));
           const m = UI.modal(`长按符号 ${i + 1}`, '460px');
-          actionField(m.body, doc, sdef, 'action', '点击输出');
+          // 快捷改内容：显示和输出一起换
+          const curContent = sdef.action && typeof sdef.action === 'object'
+            ? (sdef.action.symbol != null ? sdef.action.symbol : sdef.action.character) : '';
+          m.body.appendChild(field('符号内容（显示和输出一起改）', textInput(curContent, v => {
+            if (v == null || v === '') return;
+            App.edit(d => {
+              const sd = symOwner(d);
+              if (!sd) return;
+              if (sd.action && typeof sd.action === 'object' && 'character' in sd.action) sd.action = { character: v };
+              else sd.action = { symbol: v };
+              const fgNames = sd.foregroundStyle == null ? [] : (Array.isArray(sd.foregroundStyle) ? sd.foregroundStyle : [sd.foregroundStyle]);
+              for (const fn2 of fgNames) {
+                const fs = typeof fn2 === 'string' ? d[fn2] : fn2;
+                if (fs && (fs.buttonStyleType === 'text' || fs.text != null)) fs.text = v;
+              }
+            });
+            drawList();
+          })));
+          actionField(m.body, doc, sdef, 'action', '选中后输出什么（高级）', symOwner);
           const fgBox = el('div');
-          m.body.appendChild(field('显示样式(前景)', fgBox));
-          styleRefEditor(fgBox, doc, sdef, 'foregroundStyle', { multi: true, defaultType: 'text', baseName: (typeof sn === 'string' ? sn : 'hintSymbol') + 'Fg' });
+          m.body.appendChild(field('显示样式（前景）', fgBox));
+          styleRefEditor(fgBox, doc, sdef, 'foregroundStyle', { multi: true, defaultType: 'text', baseName: (typeof sn === 'string' ? sn : 'hintSymbol') + 'Fg', resolveOwner: symOwner });
         }, 'ref-name'));
-        row.appendChild(button('✕', () => {
-          App.edit(() => { hs.symbolStyles.splice(i, 1); });
+        if (i > 0) row.appendChild(button('↑', () => {
+          editPanel(h => {
+            const a = h.symbolStyles || [];
+            if (i < 1 || i >= a.length) return;
+            [a[i - 1], a[i]] = [a[i], a[i - 1]];
+          });
           drawList();
+          App.renderPreview();
+        }, 'mini-btn'));
+        row.appendChild(button('✕', () => {
+          editPanel(h => { (h.symbolStyles || []).splice(i, 1); });
+          drawList();
+          App.renderPreview();
         }, 'mini-btn'));
         listWrap.appendChild(row);
       });
-      listWrap.appendChild(button('＋添加符号', () => {
-        const ch = prompt('长按输出的符号内容：', '');
-        if (ch == null || ch === '') return;
-        const base = (App.selection || 'key') + 'HintSym';
-        let n = base + ((hs.symbolStyles || []).length + 1);
-        let fg = n + 'Fg', j = 2;
-        while (doc[n]) n = n + '_' + j++;
-        while (doc[fg]) fg = fg + '_' + j++;
-        App.edit(d => {
-          d[fg] = { buttonStyleType: 'text', text: ch, fontSize: 16, normalColor: Renderer.state.mode === 'dark' ? '#ffffff' : '#000000' };
-          d[n] = { action: { symbol: ch }, foregroundStyle: fg };
-          hs.symbolStyles = hs.symbolStyles || [];
-          hs.symbolStyles.push(n);
-        });
-        drawList();
-      }, 'btn small'));
+      if (!items.length) {
+        listWrap.appendChild(el('div', 'hint-line warn', '面板还没有符号——空面板在手机上不会显示，点下面添加。'));
+      }
+      listWrap.appendChild(button('＋添加符号（可一次加一串）', openBatchAdd, 'btn small'));
     }
     drawList();
+
+    container.appendChild(button('删除整个长按面板', () => {
+      if (!confirm('确定删除这个键的长按符号面板吗？（符号样式定义保留，可撤销）')) return;
+      App.edit(d => {
+        const dd = d[keyName];
+        if (dd) { delete dd.hintSymbolsStyle; delete dd.holdSymbolsStyle; }
+      });
+      redraw();
+    }, 'btn small danger'));
   }
 
   // ============ 主入口：按键检查器 ============
@@ -3513,56 +3874,63 @@ const Inspector = (() => {
     quickSec.body.appendChild(el('div', 'hint-line', '如果这个样式原本被多个键共用，这里改动时会自动为本键复制一份独立样式，其他键不受影响。'));
     container.appendChild(quickSec.root);
 
+    // 明暗同步安全：所有修改按“按键名字”落到浅色/深色两份文件
+    const keyOwner = d => d[keyName];
+    const editKey = mut => App.edit(d => {
+      const dd = d[keyName];
+      if (dd && typeof dd === 'object') mut(dd);
+    });
+
     // ---- 尺寸 ----
     const sizeSec = section('尺寸与位置', true);
-    sizeSec.body.appendChild(field('宽度', dimInput(def.size && def.size.width, v => App.edit(() => {
-      def.size = def.size || {};
-      if (v == null) delete def.size.width; else def.size.width = v;
-      if (!Object.keys(def.size).length) delete def.size;
+    sizeSec.body.appendChild(field('宽度（自动=和同行按键平分）', dimInput(def.size && def.size.width, v => editKey(dd => {
+      dd.size = dd.size || {};
+      if (v == null) delete dd.size.width; else dd.size.width = v;
+      if (!Object.keys(dd.size).length) delete dd.size;
     }))));
-    sizeSec.body.appendChild(field('高度', dimInput(def.size && def.size.height, v => App.edit(() => {
-      def.size = def.size || {};
-      if (v == null) delete def.size.height; else def.size.height = v;
-      if (!Object.keys(def.size).length) delete def.size;
+    sizeSec.body.appendChild(field('高度（自动=和同列按键平分）', dimInput(def.size && def.size.height, v => editKey(dd => {
+      dd.size = dd.size || {};
+      if (v == null) delete dd.size.height; else dd.size.height = v;
+      if (!Object.keys(dd.size).length) delete dd.size;
     }))));
-    sizeSec.body.appendChild(field('内容中心 center(0~1)', pointInput(def.center ? { ...def.center } : null, v => App.edit(() => set(def, 'center', v)))));
-    const boundsSec = section('可视区域 bounds（高级）', false);
+    sizeSec.body.appendChild(field('内容中心 center（0~1，挪动文字/图标位置）', pointInput(def.center ? { ...def.center } : null, v => editKey(dd => set(dd, 'center', v)))));
+    const boundsSec = section('可视区域 bounds（高级：让按键的"可见部分"小于点击区域）', false);
     const b = def.bounds || {};
-    boundsSec.body.appendChild(field('对齐', selectInput(b.alignment || '', [['', '(居中)'], ['center', 'center'], ['centerTop', '上中'], ['centerBottom', '下中'], ['left', '左'], ['right', '右'], ['leftTop', '左上'], ['leftBottom', '左下'], ['rightTop', '右上'], ['rightBottom', '右下']], v => App.edit(() => { def.bounds = def.bounds || {}; if (v) def.bounds.alignment = v; else delete def.bounds.alignment; if (!Object.keys(def.bounds).length) delete def.bounds; }))));
-    boundsSec.body.appendChild(field('宽', dimInput(b.width, v => App.edit(() => { def.bounds = def.bounds || {}; if (v == null) delete def.bounds.width; else def.bounds.width = v; if (!Object.keys(def.bounds).length) delete def.bounds; }))));
-    boundsSec.body.appendChild(field('高', dimInput(b.height, v => App.edit(() => { def.bounds = def.bounds || {}; if (v == null) delete def.bounds.height; else def.bounds.height = v; if (!Object.keys(def.bounds).length) delete def.bounds; }))));
+    boundsSec.body.appendChild(field('对齐', selectInput(b.alignment || '', [['', '（居中·默认）'], ['center', '正中 center'], ['centerTop', '上中'], ['centerBottom', '下中'], ['left', '左'], ['right', '右'], ['leftTop', '左上'], ['leftBottom', '左下'], ['rightTop', '右上'], ['rightBottom', '右下']], v => editKey(dd => { dd.bounds = dd.bounds || {}; if (v) dd.bounds.alignment = v; else delete dd.bounds.alignment; if (!Object.keys(dd.bounds).length) delete dd.bounds; }))));
+    boundsSec.body.appendChild(field('宽', dimInput(b.width, v => editKey(dd => { dd.bounds = dd.bounds || {}; if (v == null) delete dd.bounds.width; else dd.bounds.width = v; if (!Object.keys(dd.bounds).length) delete dd.bounds; }))));
+    boundsSec.body.appendChild(field('高', dimInput(b.height, v => editKey(dd => { dd.bounds = dd.bounds || {}; if (v == null) delete dd.bounds.height; else dd.bounds.height = v; if (!Object.keys(dd.bounds).length) delete dd.bounds; }))));
     sizeSec.body.appendChild(boundsSec.root);
     container.appendChild(sizeSec.root);
 
     // ---- 动作 ----
-    const actSec = section('按键动作', true);
-    actionField(actSec.body, doc, def, 'action', '点击动作');
-    actionField(actSec.body, doc, def, 'swipeUpAction', '上滑动作');
-    actionField(actSec.body, doc, def, 'swipeDownAction', '下滑动作');
-    actionField(actSec.body, doc, def, 'swipeLeftAction', '左滑动作（部分版本）');
-    actionField(actSec.body, doc, def, 'swipeRightAction', '右滑动作（部分版本）');
+    const actSec = section('按键动作（点一下 / 滑动做什么）', true);
+    actionField(actSec.body, doc, def, 'action', '点击动作', keyOwner);
+    actionField(actSec.body, doc, def, 'swipeUpAction', '上滑动作（手指按住往上划）', keyOwner);
+    actionField(actSec.body, doc, def, 'swipeDownAction', '下滑动作（手指按住往下划）', keyOwner);
+    actionField(actSec.body, doc, def, 'swipeLeftAction', '左滑动作（部分版本支持）', keyOwner);
+    actionField(actSec.body, doc, def, 'swipeRightAction', '右滑动作（部分版本支持）', keyOwner);
     const advAct = section('更多动作（长按重复 / 状态动作）', false);
-    actionField(advAct.body, doc, def, 'repeatAction', '长按重复动作');
-    actionField(advAct.body, doc, def, 'preeditStateAction', '预编辑状态下点击');
-    actionField(advAct.body, doc, def, 'uppercasedStateAction', '大写状态下点击');
+    actionField(advAct.body, doc, def, 'repeatAction', '长按重复动作（按住不放连续触发，删除键常用）', keyOwner);
+    actionField(advAct.body, doc, def, 'preeditStateAction', '打拼音时点击（有预编辑文字时改做什么）', keyOwner);
+    actionField(advAct.body, doc, def, 'uppercasedStateAction', '大写状态下点击', keyOwner);
     actSec.body.appendChild(advAct.root);
     container.appendChild(actSec.root);
 
     // ---- 样式 ----
     const stSec = section('外观样式', true);
     const bgBox = el('div');
-    stSec.body.appendChild(field('背景样式', bgBox));
-    styleRefEditor(bgBox, doc, def, 'backgroundStyle', { baseName: keyName + 'Background' });
+    stSec.body.appendChild(field('背景样式（按键的底色/底图）', bgBox));
+    styleRefEditor(bgBox, doc, def, 'backgroundStyle', { baseName: keyName + 'Background', resolveOwner: keyOwner });
     const fgBox = el('div');
-    stSec.body.appendChild(field('前景样式（可叠加多层）', fgBox));
-    styleRefEditor(fgBox, doc, def, 'foregroundStyle', { multi: true, defaultType: 'text', baseName: keyName + 'Foreground' });
-    const upSec = section('大写 / 大写锁定状态前景', false);
+    stSec.body.appendChild(field('前景样式（键面上的文字/图标，可叠多层）', fgBox));
+    styleRefEditor(fgBox, doc, def, 'foregroundStyle', { multi: true, defaultType: 'text', baseName: keyName + 'Foreground', resolveOwner: keyOwner });
+    const upSec = section('大写 / 大写锁定状态前景（按 Shift 后键面显示什么）', false);
     const upBox = el('div');
     upSec.body.appendChild(field('大写状态前景', upBox));
-    styleRefEditor(upBox, doc, def, 'uppercasedStateForegroundStyle', { multi: true, defaultType: 'text', baseName: keyName + 'Uppercased' });
+    styleRefEditor(upBox, doc, def, 'uppercasedStateForegroundStyle', { multi: true, defaultType: 'text', baseName: keyName + 'Uppercased', resolveOwner: keyOwner });
     const capsBox = el('div');
-    upSec.body.appendChild(field('大写锁定前景', capsBox));
-    styleRefEditor(capsBox, doc, def, 'capsLockedStateForegroundStyle', { multi: true, defaultType: 'text', baseName: keyName + 'CapsLocked' });
+    upSec.body.appendChild(field('大写锁定前景（双击 Shift 锁定后）', capsBox));
+    styleRefEditor(capsBox, doc, def, 'capsLockedStateForegroundStyle', { multi: true, defaultType: 'text', baseName: keyName + 'CapsLocked', resolveOwner: keyOwner });
     stSec.body.appendChild(upSec.root);
     container.appendChild(stSec.root);
 
@@ -3656,16 +4024,16 @@ const Inspector = (() => {
 
   // ============ 集合视图检查器 ============
   const COLLECTION_TYPES = [
-    ['symbols', '纵向符号列表'],
-    ['t9Symbols', 'T9 纵向符号列表'],
-    ['t9HorizontalSymbols', 'T9 横向拼音列表'],
-    ['numericSymbols', '数字键盘符号列表'],
-    ['horizontalSymbols', '横向符号列表'],
-    ['classifiedSymbols', '一级分类符号'],
-    ['subClassifiedSymbols', '二级分类符号'],
+    ['symbols', '竖排符号列表'],
+    ['t9Symbols', '九键·竖排符号列表'],
+    ['t9HorizontalSymbols', '九键·横排拼音列表'],
+    ['numericSymbols', '数字键盘·符号列表'],
+    ['horizontalSymbols', '横排符号列表'],
+    ['classifiedSymbols', '符号分类·一级（常用/中文…）'],
+    ['subClassifiedSymbols', '符号分类·二级（具体符号）'],
     ['categorySymbols', '内置分类符号'],
-    ['horizontalCandidates', '横向候选字'],
-    ['verticalCandidates', '纵向候选字'],
+    ['horizontalCandidates', '横排候选字'],
+    ['verticalCandidates', '竖排候选字'],
   ];
 
   function showCollection(container, doc, keyName, def) {
@@ -5276,6 +5644,313 @@ const SkinTemplate = (() => {
 </script>
 <script>
 /* =========================================================
+ * wizard.js — 小白向导：几步做出一整套皮肤（不削减任何高级功能）
+ *   一键换肤：自动区分主键/功能键上色，浅色+深色一起改
+ * ========================================================= */
+'use strict';
+
+const Wizard = (() => {
+  const { el, field, section, button, toast } = UI;
+  const M = () => SkinModel.model;
+
+  // ---------- 配色主题库（每套都配好浅色 + 深色两种模式） ----------
+  // main=字母/数字键  fn=功能键(空格除外)  pressed=按下色  text=字/图标色
+  // kb=键盘整体底色   edge=键底 3D 立体边(可空)  border=描边(可空)
+  const THEMES = [
+    { id: 'ios', name: '简约白', emoji: '⚪', tag: '像原装键盘，百搭',
+      light: { kb: '#d1d4da', main: '#ffffff', fn: '#abb0ba', pressed: '#c8ccd3', text: '#000000', edge: '#8b8d94' },
+      dark:  { kb: '#2a2a2c', main: '#6a6a6d', fn: '#48484a', pressed: '#8a8a8d', text: '#ffffff', edge: '#1c1c1e' } },
+    { id: 'ink', name: '暗夜黑', emoji: '⚫', tag: '低调耐看，护眼',
+      light: { kb: '#c9ccd2', main: '#3c3f46', fn: '#2b2d33', pressed: '#55585f', text: '#ffffff', edge: '#1c1e22' },
+      dark:  { kb: '#0d0d0f', main: '#242427', fn: '#161618', pressed: '#3a3a3e', text: '#f2f2f5', edge: '#000000' } },
+    { id: 'sakura', name: '少女粉', emoji: '🌸', tag: '甜甜的樱花色',
+      light: { kb: '#ffe3ec', main: '#ffffff', fn: '#ffb3cd', pressed: '#ffc9db', text: '#a23b63', edge: '#f0a8c0' },
+      dark:  { kb: '#2b1a22', main: '#5a3244', fn: '#3f2530', pressed: '#7a4560', text: '#ffd9e6', edge: '#1a0f15' } },
+    { id: 'sky', name: '天空蓝', emoji: '🩵', tag: '清爽的海天色',
+      light: { kb: '#d5e8f7', main: '#ffffff', fn: '#9fc6e8', pressed: '#c2ddf2', text: '#1c4e7a', edge: '#8fb4d6' },
+      dark:  { kb: '#111d29', main: '#26435c', fn: '#1a2f42', pressed: '#3a5f80', text: '#cfe6fb', edge: '#0a121a' } },
+    { id: 'mint', name: '薄荷绿', emoji: '🌿', tag: '小清新，很舒服',
+      light: { kb: '#d7f0e4', main: '#ffffff', fn: '#a3d9c0', pressed: '#c3e8d6', text: '#1d6b4f', edge: '#8fc7ae' },
+      dark:  { kb: '#10231b', main: '#254a3a', fn: '#193428', pressed: '#376b54', text: '#cdf3e2', edge: '#081611' } },
+    { id: 'sunset', name: '暖阳橙', emoji: '🧡', tag: '温暖活泼',
+      light: { kb: '#ffe6d2', main: '#ffffff', fn: '#ffbc8f', pressed: '#ffd2b3', text: '#a8541f', edge: '#f0ad82' },
+      dark:  { kb: '#291a10', main: '#56341c', fn: '#3a2718', pressed: '#7a4a2c', text: '#ffe0c9', edge: '#1a0f08' } },
+    { id: 'grape', name: '星空紫', emoji: '🔮', tag: '梦幻又高级',
+      light: { kb: '#e6ddf7', main: '#ffffff', fn: '#c1a8ea', pressed: '#d5c4f0', text: '#5b3a9c', edge: '#ab90d6' },
+      dark:  { kb: '#1a1428', main: '#3a2d5c', fn: '#271e40', pressed: '#544080', text: '#e2d6fb', edge: '#100a1a' } },
+    { id: 'gray', name: '高级灰', emoji: '🩶', tag: '商务简洁',
+      light: { kb: '#e2e3e7', main: '#ffffff', fn: '#c2c5cc', pressed: '#d5d7dd', text: '#33363d', edge: '#b0b3ba' },
+      dark:  { kb: '#1c1c1f', main: '#3a3a3f', fn: '#2a2a2e', pressed: '#54545a', text: '#e8e8ec', edge: '#0e0e10' } },
+    { id: 'glass', name: '玻璃透明', emoji: '🫧', tag: '半透明磨砂感',
+      light: { kb: '#cdd2daee', main: '#ffffffd0', fn: '#aab0bcb0', pressed: '#fffffff0', text: '#20232a', edge: null },
+      dark:  { kb: '#16181cee', main: '#4a4a5099', fn: '#33333a88', pressed: '#6a6a72cc', text: '#f0f0f4', edge: null } },
+  ];
+
+  const RADIUS_PRESETS = [['5', '小圆角（默认）', 5], ['9', '中圆角', 9], ['16', '大圆角（药丸形）', 16], ['2', '几乎方正', 2]];
+
+  // ---------- 遍历工具 ----------
+  function collectKeyNames(doc) {
+    const names = new Set();
+    const walk = arr => {
+      if (!Array.isArray(arr)) return;
+      for (const item of arr) {
+        if (item && item.Cell != null) names.add(item.Cell);
+        if (item && item.HStack) walk(item.HStack.subviews);
+        if (item && item.VStack) walk(item.VStack.subviews);
+      }
+    };
+    for (const k of ['keyboardLayout', 'toolbarLayout', 'horizontalCandidatesLayout', 'verticalCandidatesLayout']) walk(doc[k]);
+    return names;
+  }
+
+  // 判断一个键属于「主键」还是「功能键」
+  function classifyKey(def) {
+    const a = def.action;
+    if (a == null) return 'main';
+    if (typeof a === 'string') return a === 'space' ? 'main' : 'fn';
+    if (typeof a === 'object') {
+      if ('character' in a || 'symbol' in a) return 'main';
+      return 'fn';
+    }
+    return 'main';
+  }
+
+  // 把主题应用到一个键盘文档（dark 决定用哪套配色）
+  function applyThemeToDoc(doc, theme, dark, opts) {
+    const T = dark ? theme.dark : theme.light;
+    let imageKeys = 0;
+
+    // 1) 键盘整体底色
+    {
+      let st = typeof doc.keyboardStyle?.backgroundStyle === 'string' ? doc[doc.keyboardStyle.backgroundStyle] : null;
+      if (!st || st.buttonStyleType === 'fileImage') {
+        doc.keyboardStyle = doc.keyboardStyle || {};
+        const n = 'wizardKeyboardBg';
+        doc[n] = doc[n] || {};
+        st = doc[n];
+        doc.keyboardStyle.backgroundStyle = n;
+      }
+      st.buttonStyleType = 'geometry';
+      delete st.normalImage; delete st.highlightImage;
+      st.normalColor = T.kb;
+    }
+
+    // 2) 统计每个背景样式被「主键 / 功能键」使用的情况
+    const styleUse = {};
+    for (const name of collectKeyNames(doc)) {
+      const def = doc[name];
+      if (!def || typeof def !== 'object' || def.type) continue;
+      const cls = classifyKey(def);
+      const ref = def.backgroundStyle;
+      if (typeof ref === 'string') (styleUse[ref] = styleUse[ref] || new Set()).add(cls);
+    }
+    // 3) 给背景样式上色（图片背景跳过，避免破坏图片皮肤）
+    for (const sn in styleUse) {
+      const st = doc[sn];
+      if (!st || typeof st !== 'object') continue;
+      if (st.buttonStyleType === 'fileImage') { imageKeys++; continue; }
+      const onlyFn = styleUse[sn].has('fn') && !styleUse[sn].has('main');
+      st.buttonStyleType = 'geometry';
+      st.normalColor = onlyFn ? T.fn : T.main;
+      st.highlightColor = T.pressed;
+      if (opts.radius != null) st.cornerRadius = opts.radius;
+      if (T.edge) st.normalLowerEdgeColor = T.edge;
+      else { delete st.normalLowerEdgeColor; delete st.highlightLowerEdgeColor; }
+      if (opts.clearShadow) { delete st.normalShadowColor; delete st.highlightShadowColor; delete st.shadowOpacity; delete st.shadowRadius; }
+    }
+
+    // 4) 文字/图标统一改色（图片前景不动）
+    const seen = new Set();
+    for (const name of collectKeyNames(doc)) {
+      const def = doc[name];
+      if (!def || typeof def !== 'object' || def.type) continue;
+      const refs = def.foregroundStyle == null ? [] : (Array.isArray(def.foregroundStyle) ? def.foregroundStyle : [def.foregroundStyle]);
+      for (const rn of refs) {
+        if (typeof rn !== 'string') continue;
+        const st = doc[rn];
+        if (!st || seen.has(st)) continue;
+        seen.add(st);
+        if (st.buttonStyleType === 'text' || st.text != null || st.buttonStyleType === 'systemImage') {
+          st.normalColor = T.text;
+          if (opts.weight) st.fontWeight = opts.weight;
+        }
+      }
+      // 大写状态前景也跟着改
+      const upRefs = def.uppercasedStateForegroundStyle == null ? [] : (Array.isArray(def.uppercasedStateForegroundStyle) ? def.uppercasedStateForegroundStyle : [def.uppercasedStateForegroundStyle]);
+      for (const rn of upRefs) {
+        if (typeof rn !== 'string') continue;
+        const st = doc[rn];
+        if (!st || seen.has(st)) continue;
+        seen.add(st);
+        if (st.buttonStyleType === 'text' || st.text != null) st.normalColor = T.text;
+      }
+    }
+
+    // 5) 候选栏配色（让候选字也协调）
+    for (const csName in doc) {
+      const cs = doc[csName];
+      if (!cs || typeof cs !== 'object') continue;
+      if (cs.textColor !== undefined || cs.preferredTextColor !== undefined) {
+        cs.textColor = T.text;
+        cs.preferredTextColor = dark ? '#7fb0ff' : '#2f6fed';
+        if (cs.preferredIndexColor !== undefined) cs.preferredIndexColor = cs.preferredTextColor;
+      }
+    }
+    // 预编辑文字色
+    for (const pn in doc) {
+      const p = doc[pn];
+      if (p && typeof p === 'object' && p.textColor !== undefined && p.fontSize !== undefined && p.buttonStyleType === undefined) {
+        p.textColor = T.text;
+      }
+    }
+    return { imageKeys };
+  }
+
+  // 应用主题到整套皮肤（所有键盘 + 浅色/深色），返回统计
+  function applyTheme(theme, opts) {
+    let boards = 0, imageKeys = 0;
+    App.batchEdit(m => {
+      for (const dark of [false, true]) {
+        const mode = dark ? 'dark' : 'light';
+        for (const name in m.docs[mode]) {
+          const doc = m.docs[mode][name];
+          if (!doc || doc.__parseError) continue;
+          const r = applyThemeToDoc(doc, theme, dark, opts);
+          imageKeys += r.imageKeys;
+          boards++;
+        }
+      }
+    });
+    return { boards: boards / 2, imageKeys };
+  }
+
+  // ---------- 向导界面 ----------
+  const state = { theme: 'ios', radius: 5, weight: '', anim: null, random: false };
+
+  function open() {
+    if (!M().loaded) { startNew(); return; }
+    step2Theme();
+  }
+
+  // 没有皮肤时先建一个
+  function startNew() {
+    const m = UI.modal('第 1 步 · 先建一个键盘底子', '460px');
+    m.body.appendChild(el('div', 'hint-line', '你要做哪种中文键盘？（之后随时能加别的键盘）'));
+    const opts = [
+      ['t26', '全键盘（26 键）', '就是最常见的 QWERTY 拼音键盘，推荐新手'],
+      ['t9', '中文九键（T9）', '微信那种 3×3 九宫格。注意：手机上还要启用「中文九键」输入方案才能打字'],
+    ];
+    for (const [kind, lab, desc] of opts) {
+      const b = button('', async () => {
+        m.close();
+        await SkinModel.newSkin(kind === 't9');
+        App.afterLoad();
+        toast('底子建好了，来挑个配色吧');
+        setTimeout(step2Theme, 150);
+      }, 'pick-item');
+      b.innerHTML = `<b>${lab}</b><br><span style="opacity:.65;font-size:12px">${desc}</span>`;
+      m.body.appendChild(b);
+    }
+  }
+
+  // 第 2 步：挑配色
+  function step2Theme() {
+    const m = UI.modal('第 2 步 · 挑一个配色（点一下立即套用预览）', '520px');
+    m.body.appendChild(el('div', 'hint-line', '点任意配色卡片，预览会马上变。浅色和深色两种模式会一起配好，手机切夜间模式也好看。'));
+    const grid = el('div', 'wiz-theme-grid');
+    for (const t of THEMES) {
+      const card = el('button', 'wiz-theme-card');
+      const dark = Renderer.state.mode === 'dark';
+      const T = dark ? t.dark : t.light;
+      card.innerHTML =
+        `<div class="wiz-swatch" style="background:${cssColor(T.kb)}">
+           <span class="wiz-k" style="background:${cssColor(T.main)};color:${cssColor(T.text)}">A</span>
+           <span class="wiz-k" style="background:${cssColor(T.fn)};color:${cssColor(T.text)}">⌫</span>
+         </div>
+         <div class="wiz-theme-name">${t.emoji} ${t.name}</div>
+         <div class="wiz-theme-tag">${t.tag}</div>`;
+      card.onclick = () => {
+        state.theme = t.id;
+        applyTheme(t, { radius: state.radius, weight: state.weight, clearShadow: false });
+        [...grid.children].forEach(c => c.classList.remove('sel'));
+        card.classList.add('sel');
+        toast(`已套用「${t.name}」`);
+      };
+      if (t.id === state.theme) card.classList.add('sel');
+      grid.appendChild(card);
+    }
+    m.body.appendChild(grid);
+    const foot = el('div', 'wiz-foot');
+    foot.appendChild(button('下一步：调整细节 →', () => { m.close(); step3Tweak(); }, 'btn primary'));
+    m.body.appendChild(foot);
+  }
+
+  // 第 3 步：圆角 / 粗细 / 动画 / 随机按下色
+  function step3Tweak() {
+    const m = UI.modal('第 3 步 · 调整细节（都可跳过）', '480px');
+    const theme = THEMES.find(t => t.id === state.theme) || THEMES[0];
+
+    m.body.appendChild(field('按键圆角', UI.selectInput(String(state.radius), RADIUS_PRESETS.map(r => [r[0], r[1]]), v => {
+      state.radius = Number(v);
+      applyTheme(theme, { radius: state.radius, weight: state.weight });
+    })));
+
+    m.body.appendChild(field('字体粗细', UI.selectInput(state.weight, [
+      ['', '默认'], ['regular', '常规'], ['medium', '中等'], ['semibold', '半粗'], ['bold', '粗体'],
+    ], v => {
+      state.weight = v;
+      applyTheme(theme, { radius: state.radius, weight: state.weight });
+    })));
+
+    const animBox = el('div');
+    animBox.appendChild(button('✨ 给所有键加「按下动画」', () => {
+      Inspector.openAnimPresetPicker(p => {
+        const an = p.id + 'Animation';
+        const r = App.applyAnimationEverywhere({ [an]: p.def }, 'all');
+        toast(`已给 ${r.keys} 个键加上「${p.name}」，按住预览里的键看看`);
+      });
+    }, 'btn small'));
+    animBox.appendChild(button('🎲 每个键随机按下色', () => {
+      document.getElementById('btnRandomPress')?.click();
+    }, 'btn small'));
+    m.body.appendChild(field('好玩的效果（可选）', animBox));
+
+    const foot = el('div', 'wiz-foot');
+    foot.appendChild(button('← 上一步', () => { m.close(); step2Theme(); }, 'btn'));
+    foot.appendChild(button('下一步：起名并导出 →', () => { m.close(); step4Export(); }, 'btn primary'));
+    m.body.appendChild(foot);
+  }
+
+  // 第 4 步：命名 + 导出
+  function step4Export() {
+    const m = UI.modal('第 4 步 · 起个名字，导出到手机', '480px');
+    const cfg = M().config = M().config || {};
+    m.body.appendChild(field('皮肤名称', UI.textInput(cfg.name || '我的皮肤', v => {
+      App.batchEdit(mm => { if (v) mm.config.name = v; });
+    })));
+    m.body.appendChild(field('作者（可留空）', UI.textInput(cfg.author || '', v => {
+      App.batchEdit(mm => { if (v) mm.config.author = v; else delete mm.config.author; });
+    })));
+    m.body.appendChild(el('div', 'hint-line',
+      '点下面「导出」后：\n' +
+      '· 电脑：会下载一个 .cskin 文件，传到手机用元书「皮肤→导入」\n' +
+      '· 手机：会弹出保存面板，选「存到文件」，再用元书导入即可\n\n' +
+      '想继续精调某个键？关掉这个向导，直接点预览里的键就能改。'));
+    const foot = el('div', 'wiz-foot');
+    foot.appendChild(button('← 上一步', () => { m.close(); step3Tweak(); }, 'btn'));
+    foot.appendChild(button('📦 导出皮肤', () => { m.close(); App.exportFile(); }, 'btn primary'));
+    m.body.appendChild(foot);
+  }
+
+  // 颜色值 → 预览用 CSS（借用渲染器的解析，支持 8 位含透明度）
+  function cssColor(v) { return Renderer.parseColor(v) || v; }
+
+  return { open, THEMES, applyTheme };
+})();
+
+</script>
+<script>
+/* =========================================================
  * main.js — 应用主逻辑：状态 / 撤销重做 / 事件 / 页面组织
  * ========================================================= */
 'use strict';
@@ -5343,6 +6018,16 @@ const App = (() => {
     if (Renderer.state.docName) M().docDirty[Renderer.state.mode].add(Renderer.state.docName);
     renderPreview();
     updateTitle();
+  }
+
+  // 整套批量编辑（向导/一键换肤用）：一次撤销点，fn 直接改整个 model，改完全量刷新
+  function batchEdit(fn) {
+    pushUndo();
+    try { fn(M()); }
+    catch (e) { console.error(e); toast('操作失败：' + e.message, true); }
+    for (const mode of ['light', 'dark']) for (const n in M().docs[mode]) M().docDirty[mode].add(n);
+    M().configDirty = true;
+    renderAll();
   }
 
   // ---------- 撤销 / 重做 ----------
@@ -5899,6 +6584,106 @@ const App = (() => {
     }
   }
 
+  // ---------- 环境探测（导出方式按环境自动选择） ----------
+  function isIOSLike() {
+    const ua = navigator.userAgent || '';
+    // iPadOS 13+ 桌面模式 UA 伪装成 Mac，用触摸点数识别
+    return /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+  }
+  function isMobileLike() {
+    const ua = navigator.userAgent || '';
+    return isIOSLike() || /Android|Mobile|HarmonyOS/i.test(ua) ||
+      (window.matchMedia && window.matchMedia('(max-width: 900px)').matches && navigator.maxTouchPoints > 0);
+  }
+  function isInAppBrowser() {
+    const ua = navigator.userAgent || '';
+    return /MicroMessenger|QQ\/|Weibo|DingTalk|Quark(?=.*Mobile)/i.test(ua);
+  }
+
+  // 触发浏览器下载（a 标签必须真实挂到页面上，部分手机浏览器才认）
+  function triggerDownload(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    // 延迟回收：手机浏览器下载是异步的，太早 revoke 会得到空文件
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 60000);
+  }
+
+  // 系统分享面板（iPhone 上可以「存储到文件」或直接发给元书）
+  async function shareSkinFile(blob, name) {
+    try {
+      const file = new File([blob], name, { type: 'application/octet-stream' });
+      if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+        await navigator.share({ files: [file] });
+        return true;
+      }
+    } catch (e) {
+      // 用户取消分享不算失败
+      if (e && (e.name === 'AbortError' || e.name === 'NotAllowedError')) return true;
+      console.warn('分享失败', e);
+    }
+    return false;
+  }
+
+  function fmtSize(n) {
+    if (n > 1024 * 1024) return (n / 1024 / 1024).toFixed(2) + ' MB';
+    if (n > 1024) return (n / 1024).toFixed(0) + ' KB';
+    return n + ' B';
+  }
+
+  // 手机端导出面板：文件已经打包好，按钮点击 = 新的用户手势，
+  // 在手势内同步调用分享/下载，绕开 iOS「异步打包后 a.click() 被静默拦截」的限制
+  function openExportModal(blob, name) {
+    const m = UI.modal('皮肤已打包完成', '440px');
+    m.body.appendChild(el('div', 'panel-hint ok', `✓ ${name}（${fmtSize(blob.size)}）已生成，选择保存方式：`));
+
+    if (isInAppBrowser()) {
+      m.body.appendChild(el('div', 'hint-line warn',
+        '⚠ 检测到你在微信/QQ 等内置浏览器里。这类浏览器不允许保存文件！\n请点右上角「⋯」→「在浏览器（Safari）中打开」，再重新导出。'));
+    }
+
+    const canShareFile = (() => {
+      try {
+        const f = new File([new Uint8Array(1)], 't.cskin', { type: 'application/octet-stream' });
+        return !!(navigator.canShare && navigator.share && navigator.canShare({ files: [f] }));
+      } catch (_) { return false; }
+    })();
+
+    if (canShareFile) {
+      const shareBtn = button('📤 存到「文件」/ 分享（iPhone 推荐）', async () => {
+        const ok = await shareSkinFile(blob, name);
+        if (ok) { m.close(); toast('已打开分享面板，选「存储到文件」或直接发送'); }
+        else toast('分享没有成功，试试下面的「直接下载」', true);
+      }, 'btn primary');
+      shareBtn.style.cssText = 'display:block;width:100%;margin:6px 0;padding:10px;';
+      m.body.appendChild(shareBtn);
+    }
+
+    const dlBtn = button('⬇ 直接下载 ' + name, () => {
+      try {
+        triggerDownload(blob, name);
+        toast('已开始下载，去浏览器的「下载」里找它');
+      } catch (e) { toast('下载失败：' + e.message, true); }
+    }, 'btn' + (canShareFile ? '' : ' primary'));
+    dlBtn.style.cssText = 'display:block;width:100%;margin:6px 0;padding:10px;';
+    m.body.appendChild(dlBtn);
+
+    const guide = UI.section('📱 怎么把皮肤装进手机？（点开看步骤）', false);
+    guide.body.appendChild(el('div', 'hint-line',
+      'iPhone / iPad：\n' +
+      '① 点上面「存到文件」，保存到 iCloud 云盘或「我的 iPhone」\n' +
+      '② 打开「文件」App，找到刚才的 .cskin 文件\n' +
+      '③ 点它 → 分享 → 选「元书输入法」；或打开元书 App → 皮肤 → 导入\n' +
+      '④ 在元书的皮肤列表里启用它\n\n' +
+      '安卓 / 电脑：下载后把文件传到手机，用元书 App 的「皮肤 → 导入」选择该文件。\n\n' +
+      '改完的皮肤要重新导入一次才会生效；旧缓存已在导出时自动清理。'));
+    m.body.appendChild(guide.root);
+  }
+
   async function exportFile() {
     if (!M().loaded) { toast('还没有打开皮肤', true); return; }
     preExportHealthCheck();
@@ -5915,12 +6700,14 @@ const App = (() => {
     try {
       const blob = await SkinModel.exportCskin();
       const name = (M().config && M().config.name ? M().config.name : 'skin') + '.cskin';
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = name;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-      toast('已导出 ' + name + '（旧缓存已自动清理）');
+      if (isMobileLike() || isInAppBrowser()) {
+        // 手机：打包完成后弹面板，让用户在"新的一次点击"里保存/分享
+        // （iOS 不允许在异步操作之后偷偷触发下载，这正是以前手机导不出的原因）
+        openExportModal(blob, name);
+      } else {
+        triggerDownload(blob, name);
+        toast('已导出 ' + name + '（旧缓存已自动清理）');
+      }
     } catch (e) {
       console.error(e);
       toast('导出失败：' + e.message, true);
@@ -5952,6 +6739,9 @@ const App = (() => {
       }
     };
     document.getElementById('btnExport').onclick = exportFile;
+    document.getElementById('btnWizard').onclick = () => Wizard.open();
+    const btnWizEmpty = document.getElementById('btnWizardEmpty');
+    if (btnWizEmpty) btnWizEmpty.onclick = () => Wizard.open();
     document.getElementById('btnUndo').onclick = undo;
     document.getElementById('btnRedo').onclick = redo;
     document.getElementById('btnRandomPress').onclick = applyRandomPressColors;
@@ -5976,7 +6766,7 @@ const App = (() => {
     document.body.addEventListener('drop', e => {
       e.preventDefault();
       const f = e.dataTransfer.files[0];
-      if (f && f.name.endsWith('.cskin')) importFile(f);
+      if (f && /\.(cskin|zip)$/i.test(f.name)) importFile(f);
     });
 
     // 顶栏切换
@@ -6174,10 +6964,13 @@ const App = (() => {
     set layoutArea(v) { app.layoutArea = v; },
     get sourceFile() { return app.sourceFile; },
     set sourceFile(v) { app.sourceFile = v; },
-    currentDoc, edit, commit, undo, redo,
+    currentDoc, edit, commit, batchEdit, undo, redo,
     renderAll, renderPreview, refreshLeftPanel, refreshInspector,
     importFile, exportFile, loadFromUrl, testAnimation,
     applyAnimationEverywhere, removeAnimationEverywhere,
+    afterLoad,
+    get leftTab() { return app.leftTab; },
+    set leftTab(v) { app.leftTab = v; },
   };
 })();
 
