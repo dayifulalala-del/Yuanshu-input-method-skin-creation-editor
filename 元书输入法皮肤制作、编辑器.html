@@ -2464,14 +2464,21 @@ const UI = (() => {
   }
 
   // 点 {x, y} 编辑
-  function pointInput(value, onChange, labels = ['x', 'y']) {
+  // opts: { labels, step, defaultVal, min, max }
+  // defaultVal —— 字段为空时界面显示的默认值（仅提示，用户不动就不写入数据）
+  function pointInput(value, onChange, opts = {}) {
+    const labels = opts.labels || ['x', 'y'];
+    const step = opts.step != null ? opts.step : 'any';
+    const dflt = opts.defaultVal;
     const wrap = el('div', 'pt-inp');
     const v = value || {};
     const mk = (key, label) => {
       const box = el('div', 'insets-box');
       box.appendChild(el('span', 'insets-lab', label));
-      const i = el('input'); i.type = 'number'; i.step = 'any';
-      i.value = v[key] == null ? '' : v[key];
+      const i = el('input'); i.type = 'number'; i.step = step;
+      if (opts.min != null) i.min = opts.min;
+      if (opts.max != null) i.max = opts.max;
+      i.value = v[key] == null ? (dflt == null ? '' : dflt) : v[key];
       i.onchange = () => {
         if (i.value === '') delete v[key]; else v[key] = Number(i.value);
         onChange(Object.keys(v).length ? v : null);
@@ -3072,8 +3079,8 @@ const Inspector = (() => {
       container.appendChild(field('阴影偏移（x 往右 / y 往下）', pointInput(style.shadowOffset ? { ...style.shadowOffset } : null, v => editStyle(st => set(st, 'shadowOffset', v)))));
       const gradSec = section('渐变高级设置', false);
       gradSec.body.appendChild(field('渐变类型', selectInput(style.colorGradientType || '', [['', '（线性·默认）'], ['axial', '线性 axial（直线过渡）'], ['radial', '辐射 radial（从中心向外）'], ['conic', '锥形 conic（绕圈过渡）']], v => editStyle(st => set(st, 'colorGradientType', v)))));
-      gradSec.body.appendChild(field('渐变起点（0~1，左上角是 0,0）', pointInput(style.colorStartPoint ? { ...style.colorStartPoint } : null, v => editStyle(st => set(st, 'colorStartPoint', v)))));
-      gradSec.body.appendChild(field('渐变终点（0~1，右下角是 1,1）', pointInput(style.colorEndPoint ? { ...style.colorEndPoint } : null, v => editStyle(st => set(st, 'colorEndPoint', v)))));
+      gradSec.body.appendChild(field('渐变起点（0~1，左上角是 0,0）', pointInput(style.colorStartPoint ? { ...style.colorStartPoint } : null, v => editStyle(st => set(st, 'colorStartPoint', v)), { step: 0.01, min: 0, max: 1 })));
+      gradSec.body.appendChild(field('渐变终点（0~1，右下角是 1,1）', pointInput(style.colorEndPoint ? { ...style.colorEndPoint } : null, v => editStyle(st => set(st, 'colorEndPoint', v)), { step: 0.01, min: 0, max: 1 })));
       gradSec.body.appendChild(field('颜色位置数组（每个颜色停在哪，0~1）', textInput((style.colorLocation || []).join(', '), v => editStyle(st => {
         const arr = v.split(',').map(s => parseFloat(s)).filter(n => isFinite(n));
         set(st, 'colorLocation', arr.length ? arr : null);
@@ -3087,12 +3094,12 @@ const Inspector = (() => {
       container.appendChild(field('字重（笔画粗细）', selectInput(typeof style.fontWeight === 'string' ? style.fontWeight : '', FONT_WEIGHTS, v => editStyle(st => set(st, 'fontWeight', v)))));
       container.appendChild(field('常态文字色', colorInput(style.normalColor, v => editStyle(st => set(st, 'normalColor', v)))));
       container.appendChild(field('按下文字色', colorInput(style.highlightColor, v => editStyle(st => set(st, 'highlightColor', v)))));
-      container.appendChild(field('位置微调 center（0~1，0.5,0.5=正中）', pointInput(style.center ? { ...style.center } : null, v => editStyle(st => set(st, 'center', v)))));
+      container.appendChild(field('位置微调 center（0~1，0.5,0.5=正中）', pointInput(style.center ? { ...style.center } : null, v => editStyle(st => set(st, 'center', v)), { step: 0.01, defaultVal: 0.5, min: 0, max: 1 })));
     } else if (type === 'fileImage') {
       container.appendChild(field('常态图片', imagePicker(style.normalImage, v => editStyle(st => set(st, 'normalImage', v)))));
       container.appendChild(field('按下图片', imagePicker(style.highlightImage, v => editStyle(st => set(st, 'highlightImage', v)))));
       container.appendChild(field('显示模式（图片怎么塞进按键）', selectInput(style.contentMode || '', CONTENT_MODES, v => editStyle(st => set(st, 'contentMode', v)))));
-      container.appendChild(field('位置微调 center（0~1）', pointInput(style.center ? { ...style.center } : null, v => editStyle(st => set(st, 'center', v)))));
+      container.appendChild(field('位置微调 center（0~1）', pointInput(style.center ? { ...style.center } : null, v => editStyle(st => set(st, 'center', v)), { step: 0.01, defaultVal: 0.5, min: 0, max: 1 })));
     } else if (type === 'systemImage') {
       const sfBox = el('div');
       sfBox.appendChild(textInput(style.systemImageName, v => editStyle(st => set(st, 'systemImageName', v)), '如 delete.left'));
@@ -4036,7 +4043,7 @@ const Inspector = (() => {
       if (v == null) delete dd.size.height; else dd.size.height = v;
       if (!Object.keys(dd.size).length) delete dd.size;
     }))));
-    sizeSec.body.appendChild(field('内容中心 center（0~1，挪动文字/图标位置）', pointInput(def.center ? { ...def.center } : null, v => editKey(dd => set(dd, 'center', v)))));
+    sizeSec.body.appendChild(field('内容中心 center（0~1，挪动文字/图标位置，0.5,0.5=正中）', pointInput(def.center ? { ...def.center } : null, v => editKey(dd => set(dd, 'center', v)), { step: 0.01, defaultVal: 0.5, min: 0, max: 1 })));
     const boundsSec = section('可视区域 bounds（高级：让按键的"可见部分"小于点击区域）', false);
     const b = def.bounds || {};
     boundsSec.body.appendChild(field('对齐', selectInput(b.alignment || '', [['', '（居中·默认）'], ['center', '正中 center'], ['centerTop', '上中'], ['centerBottom', '下中'], ['left', '左'], ['right', '右'], ['leftTop', '左上'], ['leftBottom', '左下'], ['rightTop', '右上'], ['rightBottom', '右下']], v => editKey(dd => { dd.bounds = dd.bounds || {}; if (v) dd.bounds.alignment = v; else delete dd.bounds.alignment; if (!Object.keys(dd.bounds).length) delete dd.bounds; }))));
@@ -4137,12 +4144,17 @@ const Inspector = (() => {
 
   function hintStyleEditor(container, doc, def) {
     container.innerHTML = '';
+    const keyName = App.selection;
     if (!def.hintStyle) {
       container.appendChild(button('＋添加按压气泡', () => {
-        const base = (App.selection || 'key') + 'HintStyle';
+        const base = (keyName || 'key') + 'HintStyle';
+        // 浅色/深色都不能重名
+        const taken = nm => (SkinModel.model.docs.light[Renderer.state.docName] || {})[nm] != null
+          || (SkinModel.model.docs.dark[Renderer.state.docName] || {})[nm] != null;
         let n = base, i = 2;
-        while (doc[n]) n = base + i++;
-        App.edit(d => { d[n] = {}; def.hintStyle = n; });
+        while (taken(n)) n = base + i++;
+        // 气泡样式定义 + 按键的 hintStyle 引用都写进两个模式（明暗同步）
+        App.edit(d => { d[n] = d[n] || {}; if (d[keyName]) d[keyName].hintStyle = n; });
         hintStyleEditor(container, doc, def);
       }, 'btn small'));
       return;
@@ -4150,17 +4162,24 @@ const Inspector = (() => {
     const refName = typeof def.hintStyle === 'string' ? def.hintStyle : null;
     const hs = refName ? doc[refName] : def.hintStyle;
     if (!hs) { container.appendChild(el('div', 'hint-line', `样式 ${refName} 不存在`)); return; }
+    // 在任一模式文档里定位同一个气泡样式对象——用于明暗同步改
+    const resolveHs = d => {
+      const dd = d[keyName]; if (!dd) return null;
+      const ref = dd.hintStyle;
+      return typeof ref === 'string' ? d[ref] : ref;
+    };
     const bgBox = el('div');
     container.appendChild(field('气泡背景', bgBox));
-    styleRefEditor(bgBox, doc, hs, 'backgroundStyle', { baseName: 'hintBackground' });
+    styleRefEditor(bgBox, doc, hs, 'backgroundStyle', { baseName: 'hintBackground', resolveOwner: resolveHs });
     const fgBox = el('div');
     container.appendChild(field('气泡前景', fgBox));
-    styleRefEditor(fgBox, doc, hs, 'foregroundStyle', { multi: true, defaultType: 'text', baseName: 'hintForeground' });
-    container.appendChild(field('关闭溢出检测', checkbox(hs.checkIfOverflowsParentHeight === false, v => App.edit(() => {
-      if (v) hs.checkIfOverflowsParentHeight = false; else delete hs.checkIfOverflowsParentHeight;
-    }), '气泡使用上半透明图片时建议勾选')));
+    styleRefEditor(fgBox, doc, hs, 'foregroundStyle', { multi: true, defaultType: 'text', baseName: 'hintForeground', resolveOwner: resolveHs });
+    container.appendChild(field('关闭溢出检测', checkbox(hs.checkIfOverflowsParentHeight === false, v => App.edit(d => {
+      const h = resolveHs(d); if (!h) return;
+      if (v) h.checkIfOverflowsParentHeight = false; else delete h.checkIfOverflowsParentHeight;
+    }), '气泡使用上半透明图片时建议勾选（浅色/深色会一起改）')));
     container.appendChild(button('移除气泡', () => {
-      App.edit(() => { delete def.hintStyle; });
+      App.edit(d => { if (d[keyName]) delete d[keyName].hintStyle; });
       hintStyleEditor(container, doc, def);
     }, 'btn small danger'));
   }
