@@ -4543,6 +4543,18 @@ const Panels = (() => {
     const doc = App.currentDoc();
     if (!doc) { container.appendChild(el('div', 'panel-hint', '先在「键盘」页选择一个键盘文件')); return; }
 
+    // 全局区域样式（preeditStyle/toolbarStyle/候选栏等）按名字改，浅色/深色一起同步，
+    // 避免「改了当前模式、另一模式没变，手机上看着没动」。
+    const editRegion = (key, mut) => App.edit(d => { const r = d[key] = d[key] || {}; mut(r); });
+    const regionOwner = key => (d => (d[key] = d[key] || {}));
+    // 编辑某区域引用的前景/文字样式（按引用名在两个模式各自定位再改）
+    const editRegionFg = (key, mut) => App.edit(d => {
+      const region = d[key]; if (!region) return;
+      const ref = region.foregroundStyle;
+      const f = typeof ref === 'string' ? d[ref] : ref;
+      if (f && typeof f === 'object') mut(f);
+    });
+
     // 高度
     const hSec = section('三区高度', true);
     const heightInput = (key, lab) => {
@@ -4567,22 +4579,19 @@ const Panels = (() => {
     // 键盘区
     const kSec = section('按键区 keyboardStyle', true);
     const ks = doc.keyboardStyle = doc.keyboardStyle || {};
-    kSec.body.appendChild(field('内边距', insetsInput(ks.insets, v => App.edit(d => {
-      const t = d.keyboardStyle = d.keyboardStyle || {};
-      if (v) t.insets = v; else delete t.insets;
-    }))));
+    kSec.body.appendChild(field('内边距', insetsInput(ks.insets, v => editRegion('keyboardStyle', t => { if (v) t.insets = v; else delete t.insets; }))));
     const kbg = el('div');
     kSec.body.appendChild(field('键盘背景样式', kbg));
-    Inspector.styleRefEditor(kbg, doc, ks, 'backgroundStyle', { baseName: 'keyboardBackground' });
+    Inspector.styleRefEditor(kbg, doc, ks, 'backgroundStyle', { baseName: 'keyboardBackground', resolveOwner: regionOwner('keyboardStyle') });
     container.appendChild(kSec.root);
 
     // preedit
-    const pSec = section('预编辑区 preeditStyle', false);
+    const pSec = section('预编辑区 preeditStyle（正在打的拼音码那行）', false);
     const ps = doc.preeditStyle = doc.preeditStyle || {};
-    pSec.body.appendChild(field('内边距', insetsInput(ps.insets, v => App.edit(() => { if (v) ps.insets = v; else delete ps.insets; }))));
+    pSec.body.appendChild(field('内边距（左=拼音码离左边多远，调大往右移）', insetsInput(ps.insets, v => editRegion('preeditStyle', t => { if (v) t.insets = v; else delete t.insets; }))));
     const pbg = el('div');
     pSec.body.appendChild(field('背景样式', pbg));
-    Inspector.styleRefEditor(pbg, doc, ps, 'backgroundStyle', { baseName: 'preeditBackground' });
+    Inspector.styleRefEditor(pbg, doc, ps, 'backgroundStyle', { baseName: 'preeditBackground', resolveOwner: regionOwner('preeditStyle') });
     // preedit 前景（专用格式）
     const fgName = typeof ps.foregroundStyle === 'string' ? ps.foregroundStyle : null;
     let fg = fgName ? doc[fgName] : ps.foregroundStyle;
@@ -4597,8 +4606,8 @@ const Panels = (() => {
     };
     const fgBox = el('div');
     if (fg) {
-      fgBox.appendChild(field('文字颜色', colorInput(fg.textColor || fg.normalColor, v => App.edit(() => { if (v == null) delete fg.textColor; else fg.textColor = v; }))));
-      fgBox.appendChild(field('字号', numInput(fg.fontSize, v => App.edit(() => { if (v == null) delete fg.fontSize; else fg.fontSize = v; }), { step: 0.5 })));
+      fgBox.appendChild(field('文字颜色', colorInput(fg.textColor || fg.normalColor, v => editRegionFg('preeditStyle', f => { if (v == null) delete f.textColor; else f.textColor = v; }))));
+      fgBox.appendChild(field('字号', numInput(fg.fontSize, v => editRegionFg('preeditStyle', f => { if (v == null) delete f.fontSize; else f.fontSize = v; }), { step: 0.5 })));
     } else {
       fgBox.appendChild(button('＋设置预编辑文字样式', () => { mkFg(); buildGlobalPanel(container); }, 'btn small'));
     }
@@ -4608,29 +4617,29 @@ const Panels = (() => {
     // 工具栏
     const tSec = section('工具栏 toolbar', false);
     const ts = doc.toolbarStyle = doc.toolbarStyle || {};
-    tSec.body.appendChild(field('内边距', insetsInput(ts.insets, v => App.edit(() => { if (v) ts.insets = v; else delete ts.insets; }))));
+    tSec.body.appendChild(field('内边距', insetsInput(ts.insets, v => editRegion('toolbarStyle', t => { if (v) t.insets = v; else delete t.insets; }))));
     const tbg = el('div');
     tSec.body.appendChild(field('背景样式', tbg));
-    Inspector.styleRefEditor(tbg, doc, ts, 'backgroundStyle', { baseName: 'toolbarBackground' });
+    Inspector.styleRefEditor(tbg, doc, ts, 'backgroundStyle', { baseName: 'toolbarBackground', resolveOwner: regionOwner('toolbarStyle') });
     tSec.body.appendChild(el('div', 'hint-line', '工具栏上的按钮：把预览上方切到「工具栏」后点击按钮即可编辑；增删按钮用「布局树」页。'));
     container.appendChild(tSec.root);
 
     // 横向候选栏
     const hcSec = section('横向候选栏', false);
     const hcs = doc.horizontalCandidatesStyle = doc.horizontalCandidatesStyle || {};
-    hcSec.body.appendChild(field('内边距', insetsInput(hcs.insets, v => App.edit(() => { if (v) hcs.insets = v; else delete hcs.insets; }))));
+    hcSec.body.appendChild(field('内边距', insetsInput(hcs.insets, v => editRegion('horizontalCandidatesStyle', t => { if (v) t.insets = v; else delete t.insets; }))));
     const hcbg = el('div');
     hcSec.body.appendChild(field('背景样式', hcbg));
-    Inspector.styleRefEditor(hcbg, doc, hcs, 'backgroundStyle', { baseName: 'horizontalCandidatesBackground' });
+    Inspector.styleRefEditor(hcbg, doc, hcs, 'backgroundStyle', { baseName: 'horizontalCandidatesBackground', resolveOwner: regionOwner('horizontalCandidatesStyle') });
     container.appendChild(hcSec.root);
 
     // 纵向候选栏
     const vcSec = section('纵向候选栏', false);
     const vcs = doc.verticalCandidatesStyle = doc.verticalCandidatesStyle || {};
-    vcSec.body.appendChild(field('内边距', insetsInput(vcs.insets, v => App.edit(() => { if (v) vcs.insets = v; else delete vcs.insets; }))));
+    vcSec.body.appendChild(field('内边距', insetsInput(vcs.insets, v => editRegion('verticalCandidatesStyle', t => { if (v) t.insets = v; else delete t.insets; }))));
     const vcbg = el('div');
     vcSec.body.appendChild(field('背景样式', vcbg));
-    Inspector.styleRefEditor(vcbg, doc, vcs, 'backgroundStyle', { baseName: 'verticalCandidatesBackground' });
+    Inspector.styleRefEditor(vcbg, doc, vcs, 'backgroundStyle', { baseName: 'verticalCandidatesBackground', resolveOwner: regionOwner('verticalCandidatesStyle') });
     container.appendChild(vcSec.root);
 
     const collectKeyNames = d => {
