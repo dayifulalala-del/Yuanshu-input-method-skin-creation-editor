@@ -3503,7 +3503,7 @@ const Inspector = (() => {
     // jsonnet 皮肤覆盖风险提示
     if ([...SkinModel.model.rawFiles.keys()].some(p => p.startsWith('jsonnet/'))) {
       container.appendChild(el('div', 'hint-line warn',
-        '⚠ 这个皮肤带 jsonnet 源码。在这里改的通知，如果之后在手机上「运行 main.jsonnet」重新编译，会被覆盖。想永久保留就别再运行 jsonnet，或直接改 jsonnet 源码。'));
+        '⚠ 这个皮肤是 jsonnet 编译型。实测：手机会从 jsonnet 源码重新生成键盘，这里改的通知很可能被覆盖、在手机上不生效。要可靠修改需改 jsonnet 源码后「运行 main.jsonnet」。'));
     }
 
     const keyName = App.selection;
@@ -5171,7 +5171,7 @@ const Panels = (() => {
 
     if (!m.demoPng) problems.push(['warn', '缺少 demo.png 封面（导入 App 必须）——在「皮肤信息」页生成']);
     if ([...m.rawFiles.keys()].some(p => p.startsWith('jsonnet/'))) {
-      problems.push(['warn', '此皮肤带有 jsonnet 源码。本编辑器直接修改成品 YAML（App 读取的就是它，修改有效）；但如果之后在手机上「运行 main.jsonnet」重新编译，会覆盖这里的修改。']);
+      problems.push(['warn', '此皮肤是 jsonnet 编译型（带 jsonnet 文件夹）。⚠ 实测：手机会优先从 jsonnet 源码「重新生成」键盘，本编辑器改的成品很可能被覆盖、在手机上不生效。这类皮肤要可靠修改得动 jsonnet 源码并「运行 main.jsonnet」；本编辑器最适合改「纯 YAML 皮肤」（没有 jsonnet 文件夹的）。']);
     }
     // 九键（T9）提示：需要输入方案配合
     {
@@ -6705,7 +6705,23 @@ const App = (() => {
       afterLoad();
       toast('已导入：' + file.name);
       if ([...M().rawFiles.keys()].some(p => p.startsWith('jsonnet/'))) {
-        setTimeout(() => toast('提示：此皮肤带 jsonnet 源码，编辑后不要再在手机上运行 main.jsonnet，否则会覆盖修改'), 2800);
+        // jsonnet 编译型皮肤：手机会从 jsonnet 源码重新生成键盘，编辑器改的成品很可能被覆盖。
+        // 用醒目弹窗如实告知（一闪而过的 toast 容易被忽略）。
+        setTimeout(() => {
+          const m = UI.modal('⚠ 这是 jsonnet 编译型皮肤', '460px');
+          m.body.appendChild(el('div', 'hint-line warn',
+            '这个皮肤带有 jsonnet 源码（jsonnet 文件夹）。\n\n' +
+            '实测：手机（元书）会优先从 jsonnet 源码「重新生成」键盘，' +
+            '所以在本编辑器里改的内容，导到手机上很可能被覆盖、看不到效果。'));
+          m.body.appendChild(el('div', 'hint-line',
+            '要可靠修改这类皮肤，得改 jsonnet 源码，再在手机上「长按皮肤 → 运行 main.jsonnet」。\n' +
+            '本编辑器最适合改「纯 YAML 皮肤」（解压后没有 jsonnet 文件夹的那种）——那种改完导出即生效，不用运行 jsonnet。'));
+          m.body.appendChild(el('div', 'hint-line',
+            '你仍然可以在这里查看/试改、用预览看效果；只是别指望改动能直接同步到手机上的这个 jsonnet 皮肤。'));
+          const ok = UI.button('我知道了', () => m.close(), 'btn primary');
+          ok.style.cssText = 'margin-top:10px;';
+          m.body.appendChild(ok);
+        }, 400);
       }
     } catch (e) {
       console.error(e);
