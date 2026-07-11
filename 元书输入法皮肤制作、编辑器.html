@@ -443,6 +443,29 @@ textarea.err, input.err { border-color: #e5484d; }
 .wiz-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; }
 .wiz-foot .btn { flex: 1; padding: 9px; }
 
+/* 面包屑：选中按键在皮肤结构中的位置 */
+.crumbs {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px;
+  margin-bottom: 8px; padding: 5px 7px;
+  background: var(--panel3); border: 1px solid var(--border); border-radius: 7px;
+}
+.crumb {
+  background: none; border: none; color: var(--accent-text); font: inherit;
+  font-size: 12px; cursor: pointer; padding: 1px 4px; border-radius: 4px; white-space: nowrap;
+}
+.crumb:hover { background: var(--accent-bg); }
+.crumb.static { color: var(--text-dim); cursor: default; }
+.crumb.static:hover { background: none; }
+.crumb-sep { color: var(--text-mute); font-size: 11px; }
+
+/* 结构图弹窗 */
+.sm-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 12.5px; color: var(--text); }
+.sm-row .sm-text { flex: 1; }
+.sm-row.dim { color: var(--text-mute); }
+
+/* 布局树缩进导线 */
+.lt-row.lt-depth { border-left: 2px solid var(--border3); }
+
 /* SF 图标选择器 */
 .sf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin: 8px 0; }
 .sf-item {
@@ -605,6 +628,7 @@ textarea.err, input.err { border-color: #e5484d; }
   <span class="brand">元书皮肤编辑器</span>
   <span id="titleName">未打开皮肤</span>
   <button class="btn wizard" id="btnWizard" title="不懂参数也能做皮肤：跟着几步走，自动配好颜色">🪄 一键做皮肤</button>
+  <button class="btn" id="btnStructure" title="看懂皮肤的层级结构：什么东西在哪儿改">🧭 结构</button>
   <button class="btn primary" id="btnImport">导入 .cskin</button>
   <button class="btn" id="btnNew">新建皮肤</button>
   <button class="btn primary" id="btnExport">导出 .cskin</button>
@@ -2995,7 +3019,7 @@ const Inspector = (() => {
     ['delete.left', '删除键 ⌫'], ['delete.left.fill', '删除键（实心）'],
     ['shift', 'Shift 上档 ⇧'], ['shift.fill', 'Shift（按下）'], ['capslock', '大写锁定 ⇪'], ['capslock.fill', '大写锁定（实心）'],
     ['globe', '切换输入法 🌐'], ['keyboard', '键盘'], ['keyboard.chevron.compact.down', '收起键盘'],
-    ['return', '回车 ⏎'], ['space', '空格'], ['mic', '麦克风 / 听写'], ['mic.fill', '麦克风（实心）'],
+    ['return', '回车 ⏎'], ['mic', '麦克风 / 听写'], ['mic.fill', '麦克风（实心）'],
     ['face.smiling', '笑脸 / 表情'], ['gearshape', '设置齿轮'], ['magnifyingglass', '搜索放大镜'],
     ['arrow.up', '箭头 上'], ['arrow.down', '箭头 下'], ['arrow.left', '箭头 左'], ['arrow.right', '箭头 右'],
     ['chevron.up', '尖角 上'], ['chevron.down', '尖角 下'], ['chevron.left', '尖角 左'], ['chevron.right', '尖角 右'],
@@ -3006,7 +3030,7 @@ const Inspector = (() => {
     ['trash', '垃圾桶'], ['arrow.uturn.left', '撤销 ↩'], ['arrow.uturn.right', '重做 ↪'],
     ['arrow.left.arrow.right', '左右互换 ⇆'], ['sun.max', '太阳'], ['moon', '月亮'],
     ['star', '星星'], ['star.fill', '星星（实心）'], ['heart', '爱心'], ['heart.fill', '爱心（实心）'],
-    ['hand.thumbsup', '点赞'], ['translate', '翻译'], ['photo', '图片'], ['sparkles', '星光 ✦'],
+    ['hand.thumbsup', '点赞'], ['translate', '翻译（需 iOS 17.4+）'], ['photo', '图片'], ['sparkles', '星光 ✦'],
     ['cloud', '云朵'], ['flame', '火焰'], ['leaf', '叶子'], ['bookmark', '书签'], ['quotelevel', '引号'],
   ];
 
@@ -3116,7 +3140,12 @@ const Inspector = (() => {
       container.appendChild(field('常态颜色', colorInput(style.normalColor, v => editStyle(st => set(st, 'normalColor', v)))));
       container.appendChild(field('按下颜色', colorInput(style.highlightColor, v => editStyle(st => set(st, 'highlightColor', v)))));
       container.appendChild(field('显示模式', selectInput(style.contentMode || '', CONTENT_MODES, v => editStyle(st => set(st, 'contentMode', v)))));
-      container.appendChild(el('div', 'hint-line', '预览中 SF 图标用近似字符显示，真机效果以 iOS 为准'));
+      container.appendChild(el('div', 'hint-line',
+        '预览中 SF 图标用近似字符显示，真机效果以 iOS 为准。\n' +
+        '📱 真机上图标不显示（空白）的两大原因：\n' +
+        '① 图标名拼写错误（大小写、圆点都不能错）\n' +
+        '② 你的 iOS 版本还没有这个图标（新图标需要新系统）\n' +
+        '不确定就在苹果「SF Symbols」App 里查，或干脆改用「文字」类型直接打一个字符（如 ⇧ ⌫ ⏎）。'));
     } else if (type === 'assetImage') {
       container.appendChild(field('内置图片名称（元书 App 自带的图片）', textInput(style.assetImageName, v => editStyle(st => set(st, 'assetImageName', v)))));
       container.appendChild(field('常态颜色', colorInput(style.normalColor, v => editStyle(st => set(st, 'normalColor', v)))));
@@ -3874,6 +3903,58 @@ const Inspector = (() => {
   }
 
   // ============ 主入口：按键检查器 ============
+  // ============ 结构定位：这个键在皮肤层级里的位置（面包屑用） ============
+  const AREA_LABELS = [
+    ['keyboardLayout', '按键区'],
+    ['toolbarLayout', '工具栏'],
+    ['horizontalCandidatesLayout', '横向候选栏'],
+    ['verticalCandidatesLayout', '纵向候选栏'],
+  ];
+  function findCellLocation(doc, keyName) {
+    for (const [area, label] of AREA_LABELS) {
+      const walk = (arr, trail) => {
+        if (!Array.isArray(arr)) return null;
+        let rowN = 0, colN = 0;
+        for (const it of arr) {
+          if (!it) continue;
+          if (it.Cell === keyName) return trail;
+          if (it.HStack) { rowN++; const r = walk(it.HStack.subviews, [...trail, `第${rowN}行`]); if (r) return r; }
+          if (it.VStack) { colN++; const r = walk(it.VStack.subviews, [...trail, `第${colN}列`]); if (r) return r; }
+        }
+        return null;
+      };
+      const r = walk(doc[area], []);
+      if (r) return { area, label, trail: r };
+    }
+    return null;
+  }
+
+  // 面包屑：文件 ▸ 区域 ▸ 第N行 ▸ 键名（每段可点击跳到对应面板）
+  function buildCrumbs(doc, keyName) {
+    const crumbs = el('div', 'crumbs');
+    crumbs.title = '这个键在皮肤结构里的位置（点任意一段跳到对应编辑面板）';
+    const sep = () => crumbs.appendChild(el('span', 'crumb-sep', '▸'));
+    const add = (text, onClick, title) => {
+      const c = onClick ? button(text, onClick, 'crumb') : el('span', 'crumb static', text);
+      if (title) c.title = title;
+      crumbs.appendChild(c);
+    };
+    add('📄 ' + (Renderer.state.docName || '键盘文件'), () => App.gotoTab('files'), '所在键盘文件 → 打开「键盘」页');
+    sep();
+    const loc = findCellLocation(doc, keyName);
+    if (loc) {
+      const goLayout = () => { App.layoutArea = loc.area; App.gotoTab('layout'); };
+      add(loc.label, goLayout, '所在区域 → 打开「布局树」页');
+      for (const t of loc.trail) { sep(); add(t, goLayout, '所在行/列 → 打开「布局树」页'); }
+      sep();
+    } else {
+      add('⚠ 未放进布局', () => { App.gotoTab('layout'); }, '这个键有定义但没放进任何布局，预览里不显示 → 去「布局树」把它加进某一行');
+      sep();
+    }
+    add('🔘 ' + keyName, null);
+    return crumbs;
+  }
+
   function showKey(container, doc, keyName) {
     container.innerHTML = '';
     const def = doc[keyName];
@@ -3885,6 +3966,8 @@ const Inspector = (() => {
       }, 'btn small'));
       return;
     }
+
+    container.appendChild(buildCrumbs(doc, keyName));
 
     const head = el('div', 'insp-head');
     head.appendChild(el('span', 'insp-title', keyName));
@@ -4879,8 +4962,9 @@ const Panels = (() => {
     container.appendChild(tree);
 
     function nodeRow(label, depth, actions, extraCls) {
-      const row = el('div', 'lt-row' + (extraCls ? ' ' + extraCls : ''));
-      row.style.paddingLeft = (depth * 14 + 4) + 'px';
+      const row = el('div', 'lt-row' + (extraCls ? ' ' + extraCls : '') + (depth > 0 ? ' lt-depth' : ''));
+      row.style.marginLeft = (depth * 14) + 'px';
+      row.style.paddingLeft = '6px';
       row.appendChild(el('span', 'lt-label', label));
       const acts = el('span', 'lt-acts');
       for (const [txt, fn, title] of actions) {
@@ -4893,6 +4977,7 @@ const Panels = (() => {
     }
 
     function drawLevel(arr, depth, parentArr, parentIdx) {
+      let rowN = 0, colN = 0;
       arr.forEach((item, i) => {
         const move = (dir) => () => {
           const j = i + dir;
@@ -4908,9 +4993,10 @@ const Panels = (() => {
         if (item.HStack || item.VStack) {
           const kind = item.HStack ? 'HStack' : 'VStack';
           const stack = item[kind];
+          const n = item.HStack ? ++rowN : ++colN;
           const styleName = typeof stack.style === 'string' ? stack.style : null;
           const sz = styleName && doc[styleName] && doc[styleName].size ? JSON.stringify(doc[styleName].size) : '自动';
-          const row = nodeRow(`${item.HStack ? '➡ 行' : '⬇ 列'} ${kind}（尺寸 ${sz}）`, depth, [
+          const row = nodeRow(`${item.HStack ? `➡ 第${n}行` : `⬇ 第${n}列`}（${kind}·尺寸 ${sz}）`, depth, [
             ['尺寸', () => editStackSize(stack, kind), '设置这一行/列的高度或宽度'],
             ['＋键', () => addCellTo(stack), '添加按键'],
             ['＋行', () => { App.editLayout(() => { stack.subviews = stack.subviews || []; stack.subviews.push({ HStack: { subviews: [] } }); }); buildLayoutPanel(container); }],
@@ -5140,26 +5226,55 @@ const Panels = (() => {
     };
     sSec.body.appendChild(button('＋添加音频文件', () => sndUp.click(), 'btn small'));
     sSec.body.appendChild(sndUp);
-    const ks = cfg.keySound = cfg.keySound || {};
+    // 修改一律现取 config.keySound，避免"清空后再选，写进已丢弃的旧对象、保存不上"的 bug
+    const editKeySound = mut => App.edit(null, () => {
+      const c = M().config = M().config || {};
+      const kk = c.keySound = c.keySound || {};
+      mut(kk);
+      if (!Object.keys(kk).length) delete c.keySound;
+      M().configDirty = true;
+    });
+    const curKS = () => (M().config && M().config.keySound) || {};
+
+    // 试听：从皮肤包里取出音频直接播放——能响=文件本身没问题
+    function playSound(name) {
+      if (!name) { toast('还没选择音频', true); return; }
+      const bytes = M().rawFiles.get('sound/' + name);
+      if (!bytes) { toast(`皮肤包里找不到 sound/${name}`, true); return; }
+      try {
+        const url = URL.createObjectURL(new Blob([bytes], { type: name.toLowerCase().endsWith('.wav') ? 'audio/wav' : 'audio/aiff' }));
+        const a = new Audio(url);
+        a.onended = () => URL.revokeObjectURL(url);
+        a.play().then(() => toast('▶ 正在试听 ' + name)).catch(e => toast('播放失败：' + e.message + '（浏览器可能不支持该格式）', true));
+      } catch (e) { toast('播放失败：' + e.message, true); }
+    }
+
     const soundOpts = [['', '（默认）'], ...M().sounds.map(s => [s, s])];
-    for (const [k, lab] of [['input', '输入键按键音'], ['delete', '删除键按键音'], ['system', '系统键按键音']]) {
-      sSec.body.appendChild(field(lab, selectInput(ks[k] || '', soundOpts, v => App.edit(null, () => {
-        if (v) ks[k] = v; else delete ks[k];
-        if (!Object.keys(cfg.keySound).length) delete cfg.keySound;
-        M().configDirty = true;
-      }))));
+    for (const [k, lab] of [['input', '输入键按键音（字母/数字/符号键）'], ['delete', '删除键按键音'], ['system', '系统键按键音（Shift/回车/切换等）']]) {
+      const row = el('div');
+      const sel = selectInput(curKS()[k] || '', soundOpts, v => editKeySound(kk => { if (v) kk[k] = v; else delete kk[k]; }));
+      row.appendChild(sel);
+      row.appendChild(button('▶ 试听', () => playSound(sel.value || curKS()[k]), 'mini-btn'));
+      sSec.body.appendChild(field(lab, row));
     }
     const ksTa = el('textarea'); ksTa.rows = 5;
     ksTa.placeholder = '按 action 单独配音（YAML）：\n- action: { character: "f" }\n  url: key_f.wav';
-    try { ksTa.value = ks.actions ? jsyaml.dump(ks.actions) : ''; } catch (_) { }
+    try { ksTa.value = curKS().actions ? jsyaml.dump(curKS().actions) : ''; } catch (_) { }
     ksTa.onchange = () => {
       try {
         const v = ksTa.value.trim() ? jsyaml.load(ksTa.value) : null;
-        App.edit(null, () => { if (v) ks.actions = v; else delete ks.actions; M().configDirty = true; });
+        editKeySound(kk => { if (v) kk.actions = v; else delete kk.actions; });
         ksTa.classList.remove('err');
       } catch (e) { ksTa.classList.add('err'); }
     };
     sSec.body.appendChild(field('按动作单独配音', ksTa));
+    sSec.body.appendChild(el('div', 'hint-line',
+      '📱 手机上听不到声音的排查顺序：\n' +
+      '① 先点上面「▶ 试听」——编辑器里能响，说明音频文件本身没问题\n' +
+      '② 元书 App 设置 → 键盘反馈：把「按键音」打开（关着的话皮肤配了也不响）\n' +
+      '③ 检查手机侧边的静音拨键和媒体音量\n' +
+      '④ 改完必须重新导出并导入皮肤\n' +
+      '⑤ jsonnet 编译型皮肤：在这里配了也会被覆盖——得把同样的 keySound 写进 jsonnet 的 main 配置里（格式一样：input/delete/system: 文件名）'));
     container.appendChild(sSec.root);
   }
 
@@ -6687,6 +6802,42 @@ const App = (() => {
     }
   }
 
+  // 切换左侧标签页（面包屑/结构图跳转用）
+  function gotoTab(name) {
+    app.leftTab = name;
+    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    refreshLeftPanel();
+  }
+
+  // 🧭 结构图：整张皮肤的层级关系 + 每一层去哪儿改
+  function openStructureMap() {
+    const m = UI.modal('🧭 皮肤结构图 —— 什么东西在哪儿改', '560px');
+    const go = tab => () => { m.close(); gotoTab(tab); };
+    const mk = (depth, text, btnLabel, onClick) => {
+      const row = el('div', 'sm-row');
+      row.style.paddingLeft = (depth * 18 + 4) + 'px';
+      row.appendChild(el('span', 'sm-text', text));
+      if (btnLabel) row.appendChild(button(btnLabel, onClick, 'mini-btn'));
+      m.body.appendChild(row);
+    };
+    mk(0, '📦 皮肤包（.cskin 压缩包）');
+    mk(1, '📄 皮肤信息：名称 / 作者 / 封面 / 字体 / 按键音', '去编辑', go('cfg'));
+    mk(1, '🗂 键盘用途分配：哪个文件当拼音 / 数字 / 符号键盘', '去编辑', go('files'));
+    mk(1, '🖼 图片：皮肤用到的 PNG 和切片', '去编辑', go('res'));
+    mk(1, '☀🌙 浅色 light / 深色 dark：每个键盘各一份（开着「明暗同步改」会一起改）');
+    mk(2, '⌨ 键盘文件（如 pinyinPortrait，浅深各一份）', '选文件', go('files'));
+    mk(3, '📏 三区高度：预编辑 / 工具栏 / 按键区', '全局页', go('global'));
+    mk(3, '🅿 预编辑区：正在打的拼音码那行', '全局页', go('global'));
+    mk(3, '🧰 工具栏 / 横向候选栏 / 纵向候选栏', '全局页', go('global'));
+    mk(3, '🧱 按键区布局 = 第1行 ▸ 第2行 ▸ …每行里放按键', '布局树', go('layout'));
+    mk(4, '🔘 按键 = 动作 + 背景样式 + 前景样式（文字/图标）');
+    mk(5, '附加：按压气泡 / 长按符号面板 / 按键动画 / 事件通知');
+    m.body.appendChild(el('div', 'hint-line',
+      '· 改「某一个键」：直接点预览里的那个键 → 右侧就是它的全部设置，顶部面包屑显示它在结构里的位置\n' +
+      '· 改「整体颜色/圆角/动画」：全局页「全部按键一起改」，或顶栏「🪄 一键做皮肤」\n' +
+      '· 检查有没有配错：「检查」页一键体检'));
+  }
+
   function updateTitle() {
     const t = document.getElementById('titleName');
     if (M().loaded) {
@@ -6979,6 +7130,7 @@ const App = (() => {
     document.getElementById('btnWizard').onclick = () => Wizard.open();
     const btnWizEmpty = document.getElementById('btnWizardEmpty');
     if (btnWizEmpty) btnWizEmpty.onclick = () => Wizard.open();
+    document.getElementById('btnStructure').onclick = openStructureMap;
     document.getElementById('btnUndo').onclick = undo;
     document.getElementById('btnRedo').onclick = redo;
     document.getElementById('btnRandomPress').onclick = applyRandomPressColors;
@@ -7213,7 +7365,7 @@ const App = (() => {
     get sourceFile() { return app.sourceFile; },
     set sourceFile(v) { app.sourceFile = v; },
     currentDoc, edit, commit, batchEdit, editLayout, undo, redo,
-    renderAll, renderPreview, refreshLeftPanel, refreshInspector,
+    renderAll, renderPreview, refreshLeftPanel, refreshInspector, gotoTab,
     importFile, exportFile, loadFromUrl, testAnimation,
     applyAnimationEverywhere, removeAnimationEverywhere,
     afterLoad,
