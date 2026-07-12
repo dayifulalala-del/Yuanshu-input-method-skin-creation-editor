@@ -1115,110 +1115,120 @@ const SkinModel = (() => {
     return binding;
   }
 
-  // ---- 按键动画 → jsonnet 覆盖层 ----
-  const ANIMATION_OVERLAY_MARKER = '// @yuanshu-editor-animation-overlay';
+  // ---- 通用 jsonnet 覆盖层 ----
+  // 让"在可视化里做的任何改动"（颜色/通知/布局/样式/尺寸/动画/config 等）在手机
+  // 「运行 main.jsonnet」重编译后依然生效：导出时把 main.jsonnet 包一层，用编译产物
+  // 与"用户改动"做对比，把改过的顶层键覆盖回重编译结果上。
+  //   注意：预编辑/候选区"位置"是编译期常量（preedit.insets / candidateInsets），必须
+  //   改 jsonnet 源码，已由 setJsonnetPreeditInsets 单独处理，不走这里。
+  const OVERLAY_MARKER = '// @yuanshu-editor-overlay';
+  const OLD_ANIM_MARKER = '// @yuanshu-editor-animation-overlay';
   function markAnimationDirty() { model.animationDirty = true; }
-  function animationLayoutKeys(doc) {
-    const keys = new Set();
-    const walk = arr => {
-      if (!Array.isArray(arr)) return;
-      for (const item of arr) {
-        if (item && typeof item.Cell === 'string') keys.add(item.Cell);
-        if (item && item.HStack) walk(item.HStack.subviews);
-        if (item && item.VStack) walk(item.VStack.subviews);
-      }
-    };
-    for (const area of ['keyboardLayout', 'toolbarLayout', 'horizontalCandidatesLayout', 'verticalCandidatesLayout']) walk(doc[area]);
-    return [...keys];
+
+  // 对比"原始编译产物"与"用户编辑后的文档"，返回改过/新增的顶层键(patch)与删除的键(deleted)
+  function docTopLevelDiff(originalObj, editedObj) {
+    const patch = {};
+    const deleted = [];
+    const oo = (originalObj && typeof originalObj === 'object') ? originalObj : {};
+    const eo = (editedObj && typeof editedObj === 'object') ? editedObj : {};
+    for (const k of Object.keys(eo)) {
+      if (k === '__parseError' || k === '__raw') continue;
+      if (!(k in oo) || JSON.stringify(eo[k]) !== JSON.stringify(oo[k])) patch[k] = eo[k];
+    }
+    for (const k of Object.keys(oo)) if (!(k in eo)) deleted.push(k);
+    return { patch, deleted };
   }
-  function collectAnimationOverlayDocuments() {
+  // 原始编译产物：优先包内原始字节（= 源码重编译应产出的内容）
+  function originalCompiledDoc(rel) {
+    if (!model.rawFiles.has(rel)) return {};
+    try { return yamlLoad(td.decode(model.rawFiles.get(rel)), rel) || {}; }
+    catch (e) { return {}; }
+  }
+  // 收集所有键盘文件的改动 + config.yaml 改动
+  function collectOverlayConfig() {
     const documents = {};
     for (const mode of ['light', 'dark']) {
       for (const name in model.docs[mode]) {
         const doc = model.docs[mode][name];
         if (!doc || doc.__parseError) continue;
-        const keys = {};
-        const definitions = {};
-        const refs = new Set();
-        for (const key of animationLayoutKeys(doc)) {
-          const def = doc[key];
-          if (!def || typeof def !== 'object' || def.type) continue;
-          const raw = def.animation;
-          const animations = raw == null ? [] : (Array.isArray(raw) ? raw : [raw]);
-          keys[key] = JSON.parse(JSON.stringify(animations));
-          for (const ref of animations) if (typeof ref === 'string') refs.add(ref);
+        const rel = `${mode}/${name}.yaml`;
+        const { patch, deleted } = docTopLevelDiff(originalCompiledDoc(rel), doc);
+        if (Object.keys(patch).length || deleted.length) {
+          documents[rel] = JSON.parse(JSON.stringify({ patch, deleted }));
         }
-        for (const ref of refs) {
-          const value = doc[ref];
-          if (value && typeof value === 'object' && value.animationType) {
-            definitions[ref] = JSON.parse(JSON.stringify(value));
-          }
-        }
-        documents[`${mode}/${name}.yaml`] = { definitions, keys };
       }
     }
-    return documents;
+    // config.yaml：与原始不同就整体覆盖（config 很小，整体覆盖最稳）
+    let configYaml = null;
+    let origCfg = {};
+    if (model.rawFiles.has('config.yaml')) {
+      try { origCfg = yamlLoad(td.decode(model.rawFiles.get('config.yaml')), 'config.yaml') || {}; } catch (e) {}
+    }
+    if (JSON.stringify(model.config || {}) !== JSON.stringify(origCfg)) {
+      configYaml = JSON.parse(JSON.stringify(model.config || {}));
+    }
+    return { configYaml, documents };
   }
-  // 导出时调用：若用户改过动画，就把 main.jsonnet 包一层，让重编译后动画仍生效。
-  function prepareJsonnetAnimationOverlay() {
+
+  // 导出时调用：只要有任何改动（或已装过覆盖层），就把 main.jsonnet 包一层。
+  function prepareJsonnetOverlay() {
     const mainRel = findSourcePath('jsonnet/main.jsonnet');
     if (!mainRel) return;
     const mainText = sourceText(mainRel);
-    const alreadyInstalled = mainText && mainText.includes(ANIMATION_OVERLAY_MARKER);
-    if (!model.animationDirty && !alreadyInstalled) return;
+    const alreadyInstalled = mainText && (mainText.includes(OVERLAY_MARKER) || mainText.includes(OLD_ANIM_MARKER));
+    const ov = collectOverlayConfig();
+    const hasChange = ov.configYaml != null || Object.keys(ov.documents).length > 0 || model.animationDirty;
+    if (!hasChange && !alreadyInstalled) return;
     if (!alreadyInstalled && (!mainText.includes('std.toString') || !mainText.includes('config.yaml'))) {
       throw new Error('这个皮肤的 main.jsonnet 不是可安全包装的标准结构，已停止导出，避免生成损坏皮肤');
     }
     const dir = mainRel.slice(0, mainRel.length - 'main.jsonnet'.length);
     const backupRel = dir + 'main.editor-original.jsonnet';
-    const overlayRel = dir + 'editor_animation_overlay.libsonnet';
-    const configRel = dir + 'editor_animation_config.libsonnet';
+    const overlayRel = dir + 'editor_overlay.libsonnet';
+    const configRel = dir + 'editor_overlay_config.libsonnet';
     if (!alreadyInstalled) {
       if (model.rawFiles.has(backupRel) || model.textOverrides.has(backupRel)) {
-        throw new Error('皮肤内已有 main.editor-original.jsonnet，无法安全安装动画覆盖层');
+        throw new Error('皮肤内已有 main.editor-original.jsonnet，无法安全安装覆盖层');
       }
       model.textOverrides.set(backupRel, mainText);
     } else if (!sourceText(backupRel)) {
-      throw new Error('动画覆盖层缺少原始 main.jsonnet 备份，已停止导出');
+      throw new Error('覆盖层缺少原始 main.jsonnet 备份，已停止导出');
+    }
+    // 清理旧版"仅动画"覆盖层文件（升级到通用覆盖层）
+    for (const old of [dir + 'editor_animation_overlay.libsonnet', dir + 'editor_animation_config.libsonnet']) {
+      model.rawFiles.delete(old);
+      model.textOverrides.delete(old);
     }
     const overlaySource =
-`// Generated by 元书皮肤编辑器；用于在 jsonnet 重编译后保留可视化设置的按键动画。
-local stripAnimation(obj) = std.foldl(
-  function(acc, field)
-    if field == 'animation' then acc else acc + { [field]: obj[field] },
-  std.objectFields(obj),
-  {}
-);
-
+`// Generated by 元书皮肤编辑器；用于在 jsonnet 重编译后保留可视化里做的所有改动。
+// applyDoc：先删掉 deleted 里的顶层键，再用 patch 覆盖同名顶层键。
 {
-  apply(doc, cfg):
-    local definitions = std.get(cfg, 'definitions', {});
-    local keyAnimations = std.get(cfg, 'keys', {});
-    local patched = std.foldl(
-      function(acc, key)
-        if std.objectHas(doc, key) && std.type(doc[key]) == 'object' then
-          acc + {
-            [key]: stripAnimation(doc[key]) +
-              (if std.length(keyAnimations[key]) > 0 then { animation: keyAnimations[key] } else {}),
-          }
-        else acc,
-      std.objectFields(keyAnimations),
-      {}
-    );
-    doc + definitions + patched,
+  applyDoc(doc, cfg)::
+    local deleted = std.get(cfg, 'deleted', []);
+    local kept = {
+      [k]: doc[k]
+      for k in std.objectFields(doc)
+      if !std.member(deleted, k)
+    };
+    kept + std.get(cfg, 'patch', {}),
 }
 `;
-    const configSource = JSON.stringify({ documents: collectAnimationOverlayDocuments() }, null, 2) + '\n';
+    const configSource = JSON.stringify(ov, null, 2) + '\n';
     const wrapperSource =
-`${ANIMATION_OVERLAY_MARKER}
+`${OVERLAY_MARKER}
+// 由元书皮肤编辑器生成：在此皮肤重编译（运行 main.jsonnet）后，把编辑器里的改动重新套用上去。
 local original = import 'main.editor-original.jsonnet';
-local overlay = import 'editor_animation_overlay.libsonnet';
-local config = import 'editor_animation_config.libsonnet';
+local overlay = import 'editor_overlay.libsonnet';
+local ov = import 'editor_overlay_config.libsonnet';
 
 {
   [path]:
-    if path == 'config.yaml' || !std.objectHas(config.documents, path) then original[path]
-    else std.toString(overlay.apply(std.parseJson(original[path]), config.documents[path]))
+    if path == 'config.yaml' then
+      (if ov.configYaml != null
+        then std.manifestYamlDoc(ov.configYaml, indent_array_in_object=true, quote_keys=false)
+        else original[path])
+    else if !std.objectHas(ov.documents, path) then original[path]
+    else std.toString(overlay.applyDoc(std.parseJson(original[path]), ov.documents[path]))
   for path in std.objectFields(original)
 }
 `;
@@ -1230,8 +1240,8 @@ local config = import 'editor_animation_config.libsonnet';
 
   // ---------- 导出 ----------
   async function exportCskin(opts = {}) {
-    // 用户改过按键动画时，先把 main.jsonnet 包一层，保证重编译后动画仍生效。
-    prepareJsonnetAnimationOverlay();
+    // jsonnet 皮肤：先把 main.jsonnet 包一层，保证重编译后可视化里做的所有改动仍生效。
+    prepareJsonnetOverlay();
     const zip = new JSZip();
     const prefix = model.rootPrefix || ((model.config && model.config.name ? String(model.config.name) : '皮肤') + '/');
 
@@ -1421,7 +1431,7 @@ local config = import 'editor_animation_config.libsonnet';
     setResourceImage, deleteResource, getResource,
     readTextFile, writeTextFile, listTextFiles,
     getJsonnetPreeditInsets, setJsonnetPreeditInsets, jsonnetPreeditBinding,
-    markAnimationDirty, prepareJsonnetAnimationOverlay, hasJsonnet,
+    markAnimationDirty, prepareJsonnetOverlay, collectOverlayConfig, hasJsonnet,
     addKeyboardDoc, removeKeyboardDoc, renameKeyboardDoc,
     snapshot, restore, yamlDump, yamlLoad,
   };
@@ -3683,7 +3693,7 @@ const Inspector = (() => {
     }
     if (SkinModel.hasJsonnet()) {
       container.appendChild(el('div', 'hint-line',
-        '✓ 这是 jsonnet 编译型皮肤：你改的按键动画会在【导出时】自动写进一层 jsonnet「动画覆盖层」，导出后在元书里长按皮肤「运行 main.jsonnet」，动画依然保留、不会被覆盖。'));
+        '✓ 这是 jsonnet 编译型皮肤：你改的按键动画会在【导出时】自动写进一层 jsonnet 覆盖层，导出后在元书里长按皮肤「运行 main.jsonnet」，动画依然保留、不会被覆盖。（颜色、通知等其它改动也一样会保留。）'));
     }
   }
 
@@ -3790,10 +3800,10 @@ const Inspector = (() => {
     testBar.appendChild(button('↩ 回常规', () => setPreviewState('normal'), 'btn small'));
     container.appendChild(testBar);
 
-    // jsonnet 皮肤覆盖风险提示
-    if ([...SkinModel.model.rawFiles.keys()].some(p => p.startsWith('jsonnet/'))) {
-      container.appendChild(el('div', 'hint-line warn',
-        '⚠ 这个皮肤是 jsonnet 编译型。实测：手机会从 jsonnet 源码重新生成键盘，这里改的通知很可能被覆盖、在手机上不生效。要可靠修改需改 jsonnet 源码后「运行 main.jsonnet」。'));
+    // jsonnet 皮肤：通知改动会随通用覆盖层生效
+    if (SkinModel.hasJsonnet()) {
+      container.appendChild(el('div', 'hint-line',
+        '✓ 这是 jsonnet 编译型皮肤：你在这里改的通知，导出时会写进一层 jsonnet 覆盖层，导入元书后长按皮肤「运行 main.jsonnet」也不会被覆盖、照样生效。'));
     }
 
     const keyName = App.selection;
@@ -4950,7 +4960,7 @@ const Panels = (() => {
         '✓ 这是 jsonnet 编译型皮肤，此项已联动源码（' + jpi.binding.label + '）：改上下左右会直接写进 jsonnet，导出后在元书里长按皮肤「运行 main.jsonnet」也不会被覆盖。上面普通「内边距」只影响本编辑器预览。'));
     } else if (SkinModel.hasJsonnet()) {
       pSec.body.appendChild(el('div', 'hint-line',
-        '⚠ 这是 jsonnet 编译型皮肤，但没定位到官方模板的 preedit/candidate 源码，上面「内边距」在手机重编译后可能被覆盖，需要到「源码」页手改对应 .libsonnet。'));
+        '⚠ 这是 jsonnet 编译型皮肤，但没定位到官方模板的 preedit/candidate 位置源码。其它改动会随覆盖层保留；但"拼音码/候选区位置"是编译期常量，需要到「源码」页在对应 .libsonnet 里手改。'));
     }
     const pbg = el('div');
     pSec.body.appendChild(field('背景样式', pbg));
@@ -5554,7 +5564,7 @@ const Panels = (() => {
       '② 元书 App 设置 → 键盘反馈：把「按键音」打开（关着的话皮肤配了也不响）\n' +
       '③ 检查手机侧边的静音拨键和媒体音量\n' +
       '④ 改完必须重新导出并导入皮肤\n' +
-      '⑤ jsonnet 编译型皮肤：在这里配了也会被覆盖——得把同样的 keySound 写进 jsonnet 的 main 配置里（格式一样：input/delete/system: 文件名）'));
+      '⑤ jsonnet 编译型皮肤：这里配的音效会随覆盖层写进 config.yaml，导入后「运行 main.jsonnet」也会保留，不用再手动改 jsonnet 了'));
     container.appendChild(sSec.root);
   }
 
@@ -5566,7 +5576,7 @@ const Panels = (() => {
 
     if (!m.demoPng) problems.push(['warn', '缺少 demo.png 封面（导入 App 必须）——在「皮肤信息」页生成']);
     if (SkinModel.hasJsonnet()) {
-      problems.push(['info', '此皮肤是 jsonnet 编译型（带 jsonnet 文件夹）。手机导入后会从 jsonnet 源码「重新生成」键盘。本编辑器已做源码联动：①「拼音码/候选区位置」会直接写进 jsonnet 源码；②「按键动画」导出时会生成 jsonnet 覆盖层——这两类改动在手机「运行 main.jsonnet」后仍然生效。其它未标「源码联动」的改动（颜色、通知等）仍可能被重编译覆盖，需要到「源码」页手改对应 .libsonnet。导出时未改动的文件会原样保留，不会破坏皮肤。']);
+      problems.push(['info', '此皮肤是 jsonnet 编译型（带 jsonnet 文件夹）。手机导入后会从 jsonnet 源码「重新生成」键盘。本编辑器已做到：你在可视化里做的改动（颜色、通知、布局、按键样式、尺寸、动画、皮肤名/作者/音效等）会在【导出时】自动写进一层 jsonnet「覆盖层」，导入后长按皮肤「运行 main.jsonnet」照样全部生效。其中「拼音码/候选区位置」是编译期常量，已单独写进 jsonnet 源码常量。导出时未改动的文件会逐字节原样保留，不会破坏皮肤。']);
     }
     // 九键（T9）提示：需要输入方案配合
     {
@@ -7144,20 +7154,18 @@ const App = (() => {
       await SkinModel.loadCskin(buf, file.name);
       afterLoad();
       toast('已导入：' + file.name);
-      if ([...M().rawFiles.keys()].some(p => p.startsWith('jsonnet/'))) {
-        // jsonnet 编译型皮肤：手机会从 jsonnet 源码重新生成键盘，编辑器改的成品很可能被覆盖。
-        // 用醒目弹窗如实告知（一闪而过的 toast 容易被忽略）。
+      if (SkinModel.hasJsonnet()) {
+        // jsonnet 编译型皮肤：手机会从 jsonnet 源码重新生成键盘。本编辑器已用"覆盖层"
+        // 让改动重编译后仍生效——用弹窗把正确用法讲清楚。
         setTimeout(() => {
-          const m = UI.modal('⚠ 这是 jsonnet 编译型皮肤', '460px');
-          m.body.appendChild(el('div', 'hint-line warn',
-            '这个皮肤带有 jsonnet 源码（jsonnet 文件夹）。\n\n' +
-            '实测：手机（元书）会优先从 jsonnet 源码「重新生成」键盘，' +
-            '所以在本编辑器里改的内容，导到手机上很可能被覆盖、看不到效果。'));
+          const m = UI.modal('这是 jsonnet 编译型皮肤（已支持）', '480px');
           m.body.appendChild(el('div', 'hint-line',
-            '要可靠修改这类皮肤，得改 jsonnet 源码，再在手机上「长按皮肤 → 运行 main.jsonnet」。\n' +
-            '本编辑器最适合改「纯 YAML 皮肤」（解压后没有 jsonnet 文件夹的那种）——那种改完导出即生效，不用运行 jsonnet。'));
+            '这个皮肤带 jsonnet 源码：导入元书后，手机会从源码「重新生成」键盘。\n\n' +
+            '✓ 本编辑器已针对这种皮肤做好处理——你在这里做的改动（颜色、通知、布局、按键样式、尺寸、按键动画、皮肤名/作者/音效，以及拼音码/候选区位置）都会在导出时写进皮肤，重编译后照样生效。'));
           m.body.appendChild(el('div', 'hint-line',
-            '你仍然可以在这里查看/试改、用预览看效果；只是别指望改动能直接同步到手机上的这个 jsonnet 皮肤。'));
+            '正确用法（很简单）：\n① 在这里随意改 → 导出 .cskin\n② 导入元书 → 长按这个皮肤 → 运行 main.jsonnet\n③ 改动全部生效，不会被覆盖。'));
+          m.body.appendChild(el('div', 'hint-line',
+            '（原理：导出时会自动给皮肤加一层"覆盖层"，在手机重新生成键盘后，把你的改动再套回去。未改动的文件原样保留，不破坏皮肤。）'));
           const ok = UI.button('我知道了', () => m.close(), 'btn primary');
           ok.style.cssText = 'margin-top:10px;';
           m.body.appendChild(ok);
