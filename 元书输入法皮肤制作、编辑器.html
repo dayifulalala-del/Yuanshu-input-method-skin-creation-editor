@@ -343,6 +343,10 @@ textarea.err, input.err { border-color: #e5484d; }
 .insets-box { display: flex; align-items: center; gap: 3px; }
 .insets-box input { width: 54px; }
 .insets-lab { color: var(--text-faint); font-size: 11px; }
+/* 滑块 */
+.slider-row { display: flex; align-items: center; gap: 8px; }
+.slider-row input[type=range] { flex: 1; min-width: 80px; accent-color: var(--accent, #4c8dff); }
+.slider-row .slider-num { width: 62px; }
 
 /* 样式引用 */
 .ref-row { display: flex; align-items: center; gap: 4px; margin: 3px 0; }
@@ -3613,14 +3617,14 @@ const Inspector = (() => {
 
   // 选择动画效果弹窗；onPick(presetId) 由调用方决定应用到一个键还是全部键
   function openAnimPresetPicker(onPick) {
-    const m = UI.modal('选一个按下动画效果', '440px');
+    const m = UI.modal('选一个按键动画（按下缩放/回弹）', '440px');
     for (const p of ANIM_PRESETS) {
       const item = button('', () => { m.close(); onPick(p); }, 'pick-item');
       item.innerHTML = `<b>${p.name}</b><br><span style="opacity:.65;font-size:12px">${p.desc}</span>`;
       m.body.appendChild(item);
     }
     m.body.appendChild(el('div', 'hint-line',
-      '「官方文档示例」和其余几种的时长写法不同（0.85 vs 70）——如果一种在手机上没动静，就换另一种风格试试。\n想要图片飘落等高级动画，用「＋添加动画」里的物理/帧动画（需要先在「图片」页放入 PNG）。'));
+      '「官方文档示例」和其余几种的时长写法不同（0.85 vs 70）——如果一种在手机上没动静，就换另一种风格试试。\n想要「按键特效」（按下弹出图片/飞溅）用「＋添加按键动画 / 按键特效」里的图片帧/图片飞溅（需要先在「图片」页放入 PNG）。'));
   }
 
   // 确保预设动画定义存在于 doc，返回定义名
@@ -3663,7 +3667,7 @@ const Inspector = (() => {
         toast(`搞定！${r.boards} 个键盘、${r.keys} 个按键全部用上了这个效果` + (hasInline ? '（个别内联动画已跳过）' : ''));
       }, 'btn small'));
     } else {
-      container.appendChild(button('＋选择一个按下动画效果（5 种）', () => {
+      container.appendChild(button('＋ 加按键动画（按下缩放/回弹·6 种预设）', () => {
         openAnimPresetPicker(p => {
           editA(d => {
             const dd = d[App.selection]; if (!dd) return;
@@ -3677,9 +3681,11 @@ const Inspector = (() => {
       }, 'btn small'));
     }
 
+    // scale=按键动画（按键缩放）；cartoon/physics=按键特效（按下弹出图片）
+    const animKindLabel = t => t === 'scale' ? '动画·缩放' : (t === 'cartoon' ? '特效·图片帧' : t === 'physics' ? '特效·图片飞溅' : (t || '?'));
     names.forEach((n, i) => {
       const row = el('div', 'ref-row');
-      const nameBtn = button(n + (doc[n] ? `（${(doc[n].animationType || '?')}）` : '（不存在）'), () => openAnimationModal(doc, n), 'ref-name');
+      const nameBtn = button(n + (doc[n] ? `（${animKindLabel(doc[n].animationType)}）` : '（不存在）'), () => openAnimationModal(doc, n), 'ref-name');
       row.appendChild(nameBtn);
       row.appendChild(button('✕', () => {
         editA(() => {
@@ -3690,17 +3696,19 @@ const Inspector = (() => {
       }, 'mini-btn'));
       container.appendChild(row);
     });
-    container.appendChild(button('＋添加动画', () => {
+    container.appendChild(button('＋ 添加按键动画 / 按键特效', () => {
       const existing = Object.keys(doc).filter(k => doc[k] && typeof doc[k] === 'object' && doc[k].animationType);
-      const m = UI.modal('添加动画', '420px');
+      const m = UI.modal('添加按键动画 / 按键特效', '440px');
+      m.body.appendChild(el('div', 'hint-line',
+        '• 按键动画＝按下时按键本身缩放/回弹（不用图片）\n• 按键特效＝按下后从键上弹出图片/飞溅（要先在「图片」页放 PNG）'));
       for (const k of existing) {
-        m.body.appendChild(button(`引用已有：${k}（${doc[k].animationType}）`, () => {
+        m.body.appendChild(button(`引用已有：${k}（${animKindLabel(doc[k].animationType)}）`, () => {
           m.close();
           editA(() => { def.animation = [...names, k]; });
           animationEditor(container, doc, def);
         }, 'pick-item'));
       }
-      for (const [t, lab] of [['scale', '新建缩放动画'], ['cartoon', '新建图片帧动画'], ['physics', '新建物理动画']]) {
+      for (const [t, lab] of [['scale', '🎬 按键动画：按下缩放/回弹'], ['cartoon', '✨ 按键特效：按下播放图片帧（需图片）'], ['physics', '✨ 按键特效：按下图片飞溅/掉落（需图片）']]) {
         m.body.appendChild(button('＋ ' + lab, () => {
           m.close();
           let n = t + 'Animation', i = 2;
@@ -3718,7 +3726,7 @@ const Inspector = (() => {
       }
     }, 'btn small'));
     if (names.length) {
-      container.appendChild(el('div', 'hint-line', '提示：在预览里按住这个键就会播放动画；帧动画/物理动画的图片名要填「图片」页里存在的 PNG 文件名。'));
+      container.appendChild(el('div', 'hint-line', '提示：在预览里按住这个键就会播放；按键特效（图片帧/飞溅）的图片名要填「图片」页里存在的 PNG 文件名。'));
     }
     if (SkinModel.hasJsonnet()) {
       container.appendChild(el('div', 'hint-line',
@@ -4478,9 +4486,10 @@ const Inspector = (() => {
     hintSymbolsEditor(hsBox, doc, def);
     container.appendChild(hintSec.root);
 
-    // ---- 动画 ----
-    const aniSec = section('按键动画', false);
+    // ---- 按键动画 / 按键特效 ----
+    const aniSec = section('按键动画 / 按键特效（这个键按下时）', false);
     const aniBox = el('div');
+    aniSec.body.appendChild(el('div', 'hint-line', '按键动画=按下缩放/回弹；按键特效=按下弹出图片。下面加哪种都行。'));
     aniSec.body.appendChild(aniBox);
     animationEditor(aniBox, doc, def);
     container.appendChild(aniSec.root);
@@ -5065,13 +5074,15 @@ const Panels = (() => {
       ['all', '整套皮肤的所有键盘（默认）'],
       ['current', '只当前这个键盘'],
     ], v => { gScope = v; })));
-    allSec.body.appendChild(el('div', 'hint-line', '默认作用到拼音/数字/符号/横竖屏/iPad 的所有键盘（浅色+深色一起）。含"打字时"才出现的样式（如空格键、回车键切换态）也一并改到。只想改一个键？点预览里的那个键用「快速配色」。'));
+    const curMode = Renderer.state.mode;
+    allSec.body.appendChild(el('div', 'hint-line',
+      `🎨 颜色类改动只作用到你当前显示的【${curMode === 'light' ? '浅色' : '深色'}】键盘——想让深浅不一样，就切到另一个模式再各自调（顶栏切换浅/深）。圆角、文字大小这类"形状"改动浅深一起改，保持一致。\n默认作用到拼音/数字/符号/横竖屏/iPad 的所有键盘。含"打字时"才出现的样式也一并改到。`));
 
-    // 遍历范围内的每个键盘文档
-    const forScopedDocs = fn => {
+    // 遍历范围内的每个键盘文档；modes 指定改哪些明暗模式（颜色只改当前，形状改浅深）
+    const forScopedDocs = (fn, modes) => {
       const m = M();
       const names = gScope === 'current' ? [Renderer.state.docName] : [...new Set([...Object.keys(m.docs.light), ...Object.keys(m.docs.dark)])];
-      for (const mode of ['light', 'dark']) {
+      for (const mode of (modes || ['light', 'dark'])) {
         for (const name of names) {
           const d = m.docs[mode][name];
           if (d && !d.__parseError) { fn(d); m.docDirty[mode].add(name); }
@@ -5130,28 +5141,35 @@ const Panels = (() => {
         }
       }
     };
+    // 形状类：浅深一起改（保持一致）
     const gApply = (label, fn) => {
-      App.edit(null, () => forScopedDocs(fn));
-      UI.toast('已应用：' + label + (gScope === 'all' ? '（所有键盘）' : '（当前键盘）'));
+      App.edit(null, () => forScopedDocs(fn, ['light', 'dark']));
+      UI.toast('已应用：' + label + (gScope === 'all' ? '（所有键盘·浅深）' : '（当前键盘·浅深）'));
+    };
+    // 颜色类：只改当前显示的明暗模式（浅/深各自调）
+    const gApplyColor = (label, fn) => {
+      const mode = Renderer.state.mode;
+      App.edit(null, () => forScopedDocs(fn, [mode]));
+      UI.toast('已应用：' + label + '（' + (mode === 'light' ? '浅色' : '深色') + '模式' + (gScope === 'all' ? '·所有键盘' : '') + '）');
     };
 
     allSec.body.appendChild(field('全部按键底色', UI.colorInput(null, v => {
       if (v == null) return;
-      gApply('按键底色', d => eachKeyBg(d, st => {
+      gApplyColor('按键底色', d => eachKeyBg(d, st => {
         if (st.buttonStyleType === 'fileImage') return; // 图片背景不动
         st.normalColor = v;
       }));
     })));
     allSec.body.appendChild(field('全部按下时底色', UI.colorInput(null, v => {
       if (v == null) return;
-      gApply('按下底色', d => eachKeyBg(d, st => {
+      gApplyColor('按下底色', d => eachKeyBg(d, st => {
         if (st.buttonStyleType === 'fileImage') return;
         st.highlightColor = v;
       }));
     })));
     allSec.body.appendChild(field('全部文字/图标颜色', UI.colorInput(null, v => {
       if (v == null) return;
-      gApply('文字颜色', d => eachKeyTextFg(d, st => { st.normalColor = v; }));
+      gApplyColor('文字颜色', d => eachKeyTextFg(d, st => { st.normalColor = v; }));
     })));
     allSec.body.appendChild(field('全部文字大小', UI.numInput(null, v => {
       if (v == null) return;
@@ -5169,7 +5187,7 @@ const Panels = (() => {
     const advSec = section('更多全局调整（边框/阴影/间隙…）', false);
     advSec.body.appendChild(field('全部按下时文字颜色', UI.colorInput(null, v => {
       if (v == null) return;
-      gApply('按下文字色', d => eachKeyTextFg(d, st => { st.highlightColor = v; }));
+      gApplyColor('按下文字色', d => eachKeyTextFg(d, st => { st.highlightColor = v; }));
     })));
     advSec.body.appendChild(field('全部文字粗细', selectInput('', [
       ['', '（不改）'], ['light', '细'], ['regular', '常规'], ['medium', '中等'], ['semibold', '半粗'], ['bold', '粗体'], ['heavy', '特粗'],
@@ -5186,7 +5204,7 @@ const Panels = (() => {
     }, { step: 0.5, min: 0 })));
     advSec.body.appendChild(field('全部按键边框颜色', UI.colorInput(null, v => {
       if (v == null) return;
-      gApply('边框颜色', d => eachKeyBg(d, st => {
+      gApplyColor('边框颜色', d => eachKeyBg(d, st => {
         if (st.buttonStyleType === 'fileImage') return;
         st.normalBorderColor = v;
         if (st.borderSize == null) st.borderSize = 1;
@@ -5194,14 +5212,14 @@ const Panels = (() => {
     })));
     advSec.body.appendChild(field('全部按键底边色(3D立体感)', UI.colorInput(null, v => {
       if (v == null) return;
-      gApply('底边色', d => eachKeyBg(d, st => {
+      gApplyColor('底边色', d => eachKeyBg(d, st => {
         if (st.buttonStyleType === 'fileImage') return;
         st.normalLowerEdgeColor = v;
       }));
     })));
     advSec.body.appendChild(field('全部按键阴影颜色', UI.colorInput(null, v => {
       if (v == null) return;
-      gApply('阴影颜色', d => eachKeyBg(d, st => {
+      gApplyColor('阴影颜色', d => eachKeyBg(d, st => {
         if (st.buttonStyleType === 'fileImage') return;
         st.normalShadowColor = v;
         if (st.shadowOpacity == null) st.shadowOpacity = 0.5;
@@ -5234,7 +5252,7 @@ const Panels = (() => {
     }, { step: 0.5, min: 0 })));
     advSec.body.appendChild(field('键盘整体背景改为纯色', UI.colorInput(null, v => {
       if (v == null) return;
-      gApply('键盘背景色', d => {
+      gApplyColor('键盘背景色', d => {
         const t = d.keyboardStyle = d.keyboardStyle || {};
         let st = typeof t.backgroundStyle === 'string' ? d[t.backgroundStyle] : null;
         if (!st) {
@@ -5250,29 +5268,52 @@ const Panels = (() => {
     allSec.body.appendChild(advSec.root);
     container.appendChild(allSec.root);
 
-    // 整套键盘特效（小白一键）
-    const fxSec = section('整套键盘特效（一键）', true);
-    let fxScope = 'all';
-    fxSec.body.appendChild(field('作用范围', selectInput('all', [
+    // ===== 按键动画（全局）：按下时按键本身缩放/回弹 =====
+    const animSec = section('🎬 按键动画（全局·按下时按键缩放回弹）', true);
+    let aScope = 'all';
+    animSec.body.appendChild(field('作用范围', selectInput('all', [
       ['all', '整套皮肤的所有键盘（推荐）'],
       ['current', '仅当前这个键盘'],
-    ], v => { fxScope = v; })));
-    fxSec.body.appendChild(UI.button('⚡ 给所有按键统一换按下动画（5 种效果可选）', () => {
+    ], v => { aScope = v; })));
+    animSec.body.appendChild(el('div', 'hint-line', '自己拖滑块调出想要的手感，再点下面的按钮应用到全部按键：'));
+    // 自定义滑块
+    let aScale = 0.9, aPress = 0.08, aRelease = 0.12;
+    const mkSlider = (label, min, max, step, val, onIn) => {
+      const wrap = el('div', 'slider-row');
+      const rng = el('input'); rng.type = 'range'; rng.min = min; rng.max = max; rng.step = step; rng.value = val;
+      const num = el('input'); num.type = 'number'; num.min = min; num.max = max; num.step = step; num.value = val; num.className = 'slider-num';
+      rng.oninput = () => { num.value = rng.value; onIn(parseFloat(rng.value)); };
+      num.oninput = () => { rng.value = num.value; onIn(parseFloat(num.value)); };
+      wrap.appendChild(rng); wrap.appendChild(num);
+      return field(label, wrap);
+    };
+    animSec.body.appendChild(mkSlider('缩放比例（0.9=按下缩到九成；大于1=按下变大）', 0.6, 1.3, 0.01, aScale, v => aScale = v));
+    animSec.body.appendChild(mkSlider('按下时长（秒·越大越慢）', 0.01, 0.5, 0.01, aPress, v => aPress = v));
+    animSec.body.appendChild(mkSlider('回弹时长（秒）', 0.01, 0.5, 0.01, aRelease, v => aRelease = v));
+    animSec.body.appendChild(UI.button('✅ 用上面滑块的参数应用到全部按键', () => {
+      const def = { animationType: 'scale', isAutoReverse: true, scale: aScale, pressDuration: aPress, releaseDuration: aRelease };
+      const r = App.applyAnimationEverywhere({ editorCustomScaleAnimation: def }, aScope);
+      UI.toast(`已把自定义按键动画应用到 ${r.boards} 个键盘、${r.keys} 个按键（浅+深）`);
+      const first = [...collectKeyNames(App.currentDoc() || {})][2];
+      if (first) { App.selection = first; setTimeout(() => App.testAnimation(first), 120); }
+    }, 'btn'));
+    animSec.body.appendChild(UI.button('或从 6 种预设里选一个', () => {
       Inspector.openAnimPresetPicker(p => {
         const an = p.id + 'Animation';
-        const r = App.applyAnimationEverywhere({ [an]: p.def }, fxScope);
-        UI.toast(`搞定！${r.boards} 个键盘、${r.keys} 个按键全部换上「${p.name}」（含浅色+深色）`);
+        const r = App.applyAnimationEverywhere({ [an]: p.def }, aScope);
+        UI.toast(`已应用「${p.name}」到 ${r.boards} 个键盘、${r.keys} 个按键（浅+深）`);
         const first = [...collectKeyNames(App.currentDoc() || {})][2];
         if (first) { App.selection = first; setTimeout(() => App.testAnimation(first), 120); }
       });
-    }, 'btn'));
-    fxSec.body.appendChild(UI.button('移除所有按键的动画', () => {
-      if (!confirm(fxScope === 'all' ? '确定移除整套皮肤所有键盘的按键动画吗？（可撤销）' : '确定移除当前键盘的按键动画吗？（可撤销）')) return;
-      const n = App.removeAnimationEverywhere(fxScope);
+    }, 'btn small'));
+    animSec.body.appendChild(UI.button('移除所有按键动画', () => {
+      if (!confirm(aScope === 'all' ? '确定移除整套皮肤所有键盘的按键动画吗？（可撤销）' : '确定移除当前键盘的按键动画吗？（可撤销）')) return;
+      const n = App.removeAnimationEverywhere(aScope);
       UI.toast(`已移除 ${n} 个按键的动画`);
     }, 'btn small danger'));
-    fxSec.body.appendChild(el('div', 'hint-line', '不用再一个键一个键点了：选一次效果，拼音/数字/符号/横竖屏/iPad 的所有按键一起换。\n想要每个键不同颜色的按下效果？用顶栏的「🎲 按下随机色」。'));
-    container.appendChild(fxSec.root);
+    animSec.body.appendChild(el('div', 'hint-line',
+      '📌 这里是「按键动画」＝按下时按键本身缩放/回弹。\n想要「按键特效」（按完之后从键上弹出图片/飞溅那种）是另一个东西：点预览里某个键 → 右侧「按键特效」里加（需要先去「图片」页放 PNG）。'));
+    container.appendChild(animSec.root);
 
     // 浮动键盘
     const fSec = section('浮动键盘（iPad）', false);
