@@ -5031,12 +5031,12 @@ const Panels = (() => {
 
     // ===== 全部按键一起改（全局编辑模式） =====
     const allSec = section('全部按键一起改（全局）', true);
-    let gScope = 'current';
-    allSec.body.appendChild(field('作用范围', selectInput('current', [
-      ['current', '当前这个键盘'],
-      ['all', '整套皮肤的所有键盘'],
+    let gScope = 'all';
+    allSec.body.appendChild(field('作用范围', selectInput('all', [
+      ['all', '整套皮肤的所有键盘（默认）'],
+      ['current', '只当前这个键盘'],
     ], v => { gScope = v; })));
-    allSec.body.appendChild(el('div', 'hint-line', '这里的修改会同时应用到浅色和深色模式。只想改一个键？点预览里的那个键用「快速配色」。'));
+    allSec.body.appendChild(el('div', 'hint-line', '默认作用到拼音/数字/符号/横竖屏/iPad 的所有键盘（浅色+深色一起）。含"打字时"才出现的样式（如空格键、回车键切换态）也一并改到。只想改一个键？点预览里的那个键用「快速配色」。'));
 
     // 遍历范围内的每个键盘文档
     const forScopedDocs = fn => {
@@ -5049,15 +5049,39 @@ const Panels = (() => {
         }
       }
     };
+    // 解析一个样式引用 → 涉及的样式对象数组。支持：样式名(string)、内联对象、
+    // 以及"条件样式数组"（如 [{conditionKey,conditionValue,styleName}]，回车键随场景变色就是这种）。
+    const styleObjsOf = (d, ref) => {
+      const out = [];
+      if (ref == null) return out;
+      if (typeof ref === 'string') { const s = d[ref]; if (s && typeof s === 'object') out.push(s); }
+      else if (Array.isArray(ref)) {
+        for (const it of ref) {
+          if (!it || typeof it !== 'object') continue;
+          if (it.styleName) { const s = d[it.styleName]; if (s && typeof s === 'object') out.push(s); }
+          else out.push(it); // 内联条件样式
+        }
+      } else if (typeof ref === 'object') out.push(ref);
+      return out;
+    };
+    // 某个键"会用到的所有背景样式"，包括通知切换出来的样式（打字时/回车态等）
+    const notifStyles = (d, def, kind) => {
+      const out = [];
+      const ns = def.notification == null ? [] : (Array.isArray(def.notification) ? def.notification : [def.notification]);
+      for (const nn of ns) {
+        const nt = typeof nn === 'string' ? d[nn] : nn;
+        if (nt && typeof nt === 'object') out.push(...styleObjsOf(d, nt[kind]));
+      }
+      return out;
+    };
     // 对文档里每个按键的背景样式对象执行 fn（Set 防止共享样式重复处理）
     const eachKeyBg = (d, fn) => {
       const seen = new Set();
       for (const name of collectKeyNames(d)) {
         const def = d[name];
         if (!def || typeof def !== 'object' || def.type) continue;
-        const ref = def.backgroundStyle;
-        const st = typeof ref === 'string' ? d[ref] : (ref && !Array.isArray(ref) ? ref : null);
-        if (st && !seen.has(st)) { seen.add(st); fn(st, def, name); }
+        const styles = [...styleObjsOf(d, def.backgroundStyle), ...notifStyles(d, def, 'backgroundStyle')];
+        for (const st of styles) { if (st && !seen.has(st)) { seen.add(st); fn(st, def, name); } }
       }
     };
     const eachKeyTextFg = (d, fn) => {
@@ -5065,10 +5089,13 @@ const Panels = (() => {
       for (const name of collectKeyNames(d)) {
         const def = d[name];
         if (!def || typeof def !== 'object' || def.type) continue;
-        const refs = def.foregroundStyle == null ? [] : (Array.isArray(def.foregroundStyle) ? def.foregroundStyle : [def.foregroundStyle]);
-        for (const rn of refs) {
-          const st = typeof rn === 'string' ? d[rn] : null;
-          if (st && !seen.has(st) && (st.buttonStyleType === 'text' || st.text != null || st.buttonStyleType === 'systemImage')) {
+        const styles = [
+          ...styleObjsOf(d, def.foregroundStyle),
+          ...styleObjsOf(d, def.uppercasedStateForegroundStyle),
+          ...notifStyles(d, def, 'foregroundStyle'),
+        ];
+        for (const st of styles) {
+          if (st && !seen.has(st) && st.buttonStyleType !== 'geometry' && st.buttonStyleType !== 'fileImage') {
             seen.add(st); fn(st);
           }
         }
@@ -7138,40 +7165,34 @@ const App = (() => {
   }
 
   function applyRandomPressColors() {
-    const doc = currentDoc();
-    if (!doc) { toast('先选择一个键盘文件', true); return; }
-    // 收集按键区布局里的所有按键名
-    const names = new Set();
-    const walk = arr => {
-      if (!Array.isArray(arr)) return;
-      for (const item of arr) {
-        if (item && item.Cell != null) names.add(item.Cell);
-        if (item && item.HStack) walk(item.HStack.subviews);
-        if (item && item.VStack) walk(item.VStack.subviews);
-      }
-    };
-    walk(doc.keyboardLayout);
+    const m = M();
+    const docNames = [...new Set([...Object.keys(m.docs.light), ...Object.keys(m.docs.dark)])];
+    if (!docNames.length) { toast('先导入或新建皮肤', true); return; }
+    // 同一个键名在所有键盘/浅深里用同一个随机色，保持一致
+    const colorFor = {};
+    const pick = kn => colorFor[kn] || (colorFor[kn] = randHex());
     let done = 0, skipped = 0;
-    edit(d => {
-      for (const name of names) {
-        const def = d[name];
-        if (!def || typeof def !== 'object' || def.type) continue; // 跳过集合视图
-        const st = Inspector.ensureUniqueStyle(d, name, def, 'backgroundStyle');
-        if (!st) { skipped++; continue; }
-        const type = st.buttonStyleType || 'geometry';
-        if (type === 'geometry') {
-          st.highlightColor = randHex();
-          done++;
-        } else if (type === 'fileImage') {
-          skipped++; // 图片背景无法直接改色，保持原样
-        } else {
-          st.buttonStyleType = 'geometry';
-          st.highlightColor = randHex();
-          done++;
+    pushUndo();
+    for (const mode of ['light', 'dark']) {
+      for (const name of docNames) {
+        const d = m.docs[mode][name];
+        if (!d || d.__parseError || !Array.isArray(d.keyboardLayout)) continue;
+        let touched = false;
+        for (const kn of collectLayoutKeys(d)) {
+          const def = d[kn];
+          if (!def || typeof def !== 'object' || def.type) continue; // 跳过集合视图
+          const st = Inspector.ensureUniqueStyle(d, kn, def, 'backgroundStyle');
+          if (!st) { skipped++; continue; }
+          if ((st.buttonStyleType || 'geometry') === 'fileImage') { skipped++; continue; } // 图片背景保持原样
+          if ((st.buttonStyleType || 'geometry') !== 'geometry') st.buttonStyleType = 'geometry';
+          st.highlightColor = pick(kn);
+          done++; touched = true;
         }
+        if (touched) m.docDirty[mode].add(name);
       }
-    });
-    toast(`已给 ${done} 个按键设置随机按下颜色${skipped ? `（${skipped} 个图片背景键跳过）` : ''}。按住预览里的键试试，导出后手机上一样生效`);
+    }
+    renderAll();
+    toast(`已给所有键盘（拼音/数字/符号/横竖屏/iPad）共 ${done} 处按键设置随机按下色${skipped ? `，跳过 ${skipped} 个图片背景键` : ''}。所有键盘类型都生效，导出后手机一样`);
   }
 
   function renderAll() {
