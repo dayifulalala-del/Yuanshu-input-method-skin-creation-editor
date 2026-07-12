@@ -833,6 +833,8 @@ const SkinModel = (() => {
     docs: { light: {}, dark: {} },   // 键盘文件名(不含.yaml) -> 解析对象
     docDirty: { light: new Set(), dark: new Set() },
     configDirty: false,
+    textOverrides: new Map(), // 被改写的 jsonnet/libsonnet/其它文本；单独保存，优先于包内原始字节
+    animationDirty: false,    // 用户在可视化里改过按键动画 → 导出时生成 jsonnet 覆盖层
     resources: { light: {}, dark: {} }, // 图片名 -> {bytes, url, img(Image), slices:{名:{rect,insets}}, slicesDirty}
     fonts: [],             // fonts 目录下的文件名
     sounds: [],            // sound 目录下的文件名
@@ -849,6 +851,8 @@ const SkinModel = (() => {
     model.docs = { light: {}, dark: {} };
     model.docDirty = { light: new Set(), dark: new Set() };
     model.configDirty = false;
+    model.textOverrides = new Map();
+    model.animationDirty = false;
     for (const m of ['light', 'dark']) {
       for (const k in model.resources[m]) {
         const r = model.resources[m][k];
@@ -1001,23 +1005,251 @@ const SkinModel = (() => {
     return model.resources[mode][name] || model.resources[mode === 'light' ? 'dark' : 'light'][name] || null;
   }
 
+  // ================================================================
+  // Jsonnet 源码联动
+  //   本编辑器改的是"编译后的成品 YAML"，而 jsonnet 编译型皮肤在手机上
+  //   「运行 main.jsonnet」时会用 jsonnet 源码重新生成 YAML，把成品覆盖掉。
+  //   为了让"预编辑/候选区位置""按键动画"这类改动重编译后仍然生效，这里
+  //   把它们直接写回 jsonnet 源码（官方模板的稳定字段），或在导出时生成一层
+  //   包装覆盖层。思路参考社区可用方案，仅针对官方模板的稳定结构做精确映射。
+  // ================================================================
+  function sourceText(rel) {
+    if (model.textOverrides.has(rel)) return model.textOverrides.get(rel);
+    const bytes = model.rawFiles.get(rel);
+    return bytes ? td.decode(bytes) : null;
+  }
+  function findSourcePath(suffix) {
+    const all = new Set([...model.rawFiles.keys(), ...model.textOverrides.keys()]);
+    return [...all].find(p => p === suffix || p.endsWith('/' + suffix)) || null;
+  }
+  function hasJsonnet() {
+    return [...model.rawFiles.keys(), ...model.textOverrides.keys()].some(p => /(^|\/)jsonnet\//.test(p) || /\.(jsonnet|libsonnet)$/i.test(p));
+  }
+
+  // ---- 预编辑区 / 候选区内边距 ↔ jsonnet 源码 ----
+  function jsonnetPreeditBinding(docName) {
+    const name = String(docName || '');
+    let rel = null;
+    if (/^iPadPinyin/i.test(name)) {
+      rel = findSourcePath('jsonnet/Components/iPadPinyin.libsonnet');
+      if (rel) return { rel, kind: 'candidateInsets', label: 'iPadPinyin.libsonnet → candidateInsets' };
+    }
+    if (/^iPadNumeric/i.test(name)) {
+      rel = findSourcePath('jsonnet/Components/iPadNumeric.libsonnet');
+      if (rel) return { rel, kind: 'candidateInsets', label: 'iPadNumeric.libsonnet → candidateInsets' };
+    }
+    rel = findSourcePath('jsonnet/Constants/Keyboard.libsonnet');
+    return rel ? { rel, kind: 'preedit', label: 'Keyboard.libsonnet → preedit.insets' } : null;
+  }
+  // 括号配对：跳过字符串、行/块注释、# 注释，返回与 open 位置 { 配对的 } 下标
+  function matchingBrace(text, open) {
+    let depth = 0, quote = null, escaped = false, lineComment = false, blockComment = false;
+    for (let i = open; i < text.length; i++) {
+      const c = text[i], n = text[i + 1];
+      if (lineComment) { if (c === '\n') lineComment = false; continue; }
+      if (blockComment) { if (c === '*' && n === '/') { blockComment = false; i++; } continue; }
+      if (quote) {
+        if (escaped) { escaped = false; continue; }
+        if (c === '\\') { escaped = true; continue; }
+        if (c === quote) quote = null;
+        continue;
+      }
+      if (c === '/' && n === '/') { lineComment = true; i++; continue; }
+      if (c === '/' && n === '*') { blockComment = true; i++; continue; }
+      if (c === '#') { lineComment = true; continue; }
+      if (c === '"' || c === "'") { quote = c; continue; }
+      if (c === '{') depth++;
+      if (c === '}' && --depth === 0) return i;
+    }
+    return -1;
+  }
+  function locateJsonnetInsets(text, binding) {
+    const anchorRe = binding.kind === 'candidateInsets'
+      ? /(?:^|\n)[ \t]*local[ \t]+candidateInsets[ \t]*=[ \t]*/m
+      : /(?:^|\n)[ \t]*preedit[ \t]*:[ \t]*/m;
+    const anchor = anchorRe.exec(text);
+    if (!anchor) return null;
+    const outerOpen = text.indexOf('{', anchor.index + anchor[0].length);
+    if (outerOpen < 0) return null;
+    const outerClose = matchingBrace(text, outerOpen);
+    if (outerClose < 0) return null;
+    const innerText = text.slice(outerOpen + 1, outerClose);
+    const insetsMatch = /(?:^|\n)([ \t]*)insets[ \t]*:[ \t]*/m.exec(innerText);
+    if (!insetsMatch) return null;
+    const insetsOpen = text.indexOf('{', outerOpen + 1 + insetsMatch.index + insetsMatch[0].length);
+    if (insetsOpen < 0 || insetsOpen >= outerClose) return null;
+    const insetsClose = matchingBrace(text, insetsOpen);
+    if (insetsClose < 0 || insetsClose > outerClose) return null;
+    return { insetsOpen, insetsClose, indent: insetsMatch[1] || '' };
+  }
+  function getJsonnetPreeditInsets(docName) {
+    const binding = jsonnetPreeditBinding(docName);
+    if (!binding) return null;
+    const text = sourceText(binding.rel);
+    const loc = text && locateJsonnetInsets(text, binding);
+    if (!loc) return null;
+    const body = text.slice(loc.insetsOpen + 1, loc.insetsClose);
+    const values = {};
+    const re = /\b(top|bottom|left|right)[ \t]*:[ \t]*(-?(?:\d+(?:\.\d+)?|\.\d+))/g;
+    let m;
+    while ((m = re.exec(body))) values[m[1]] = Number(m[2]);
+    return { values, binding };
+  }
+  function setJsonnetPreeditInsets(docName, insets) {
+    const binding = jsonnetPreeditBinding(docName);
+    if (!binding) throw new Error('这个皮肤里没有可联动的 jsonnet 预编辑区源码');
+    const text = sourceText(binding.rel);
+    const loc = text && locateJsonnetInsets(text, binding);
+    if (!loc) throw new Error(`定位不到 ${binding.label}，源码结构可能不是官方模板`);
+    const values = insets || {};
+    const lines = [];
+    for (const key of ['top', 'bottom', 'left', 'right']) {
+      if (values[key] == null || values[key] === '') continue;
+      const n = Number(values[key]);
+      if (!Number.isFinite(n)) throw new Error(`预编辑区${key}不是有效数字`);
+      lines.push(`${loc.indent}  ${key}: ${n},`);
+    }
+    const replacement = lines.length ? `\n${lines.join('\n')}\n${loc.indent}` : '';
+    const next = text.slice(0, loc.insetsOpen + 1) + replacement + text.slice(loc.insetsClose);
+    model.textOverrides.set(binding.rel, next);
+    return binding;
+  }
+
+  // ---- 按键动画 → jsonnet 覆盖层 ----
+  const ANIMATION_OVERLAY_MARKER = '// @yuanshu-editor-animation-overlay';
+  function markAnimationDirty() { model.animationDirty = true; }
+  function animationLayoutKeys(doc) {
+    const keys = new Set();
+    const walk = arr => {
+      if (!Array.isArray(arr)) return;
+      for (const item of arr) {
+        if (item && typeof item.Cell === 'string') keys.add(item.Cell);
+        if (item && item.HStack) walk(item.HStack.subviews);
+        if (item && item.VStack) walk(item.VStack.subviews);
+      }
+    };
+    for (const area of ['keyboardLayout', 'toolbarLayout', 'horizontalCandidatesLayout', 'verticalCandidatesLayout']) walk(doc[area]);
+    return [...keys];
+  }
+  function collectAnimationOverlayDocuments() {
+    const documents = {};
+    for (const mode of ['light', 'dark']) {
+      for (const name in model.docs[mode]) {
+        const doc = model.docs[mode][name];
+        if (!doc || doc.__parseError) continue;
+        const keys = {};
+        const definitions = {};
+        const refs = new Set();
+        for (const key of animationLayoutKeys(doc)) {
+          const def = doc[key];
+          if (!def || typeof def !== 'object' || def.type) continue;
+          const raw = def.animation;
+          const animations = raw == null ? [] : (Array.isArray(raw) ? raw : [raw]);
+          keys[key] = JSON.parse(JSON.stringify(animations));
+          for (const ref of animations) if (typeof ref === 'string') refs.add(ref);
+        }
+        for (const ref of refs) {
+          const value = doc[ref];
+          if (value && typeof value === 'object' && value.animationType) {
+            definitions[ref] = JSON.parse(JSON.stringify(value));
+          }
+        }
+        documents[`${mode}/${name}.yaml`] = { definitions, keys };
+      }
+    }
+    return documents;
+  }
+  // 导出时调用：若用户改过动画，就把 main.jsonnet 包一层，让重编译后动画仍生效。
+  function prepareJsonnetAnimationOverlay() {
+    const mainRel = findSourcePath('jsonnet/main.jsonnet');
+    if (!mainRel) return;
+    const mainText = sourceText(mainRel);
+    const alreadyInstalled = mainText && mainText.includes(ANIMATION_OVERLAY_MARKER);
+    if (!model.animationDirty && !alreadyInstalled) return;
+    if (!alreadyInstalled && (!mainText.includes('std.toString') || !mainText.includes('config.yaml'))) {
+      throw new Error('这个皮肤的 main.jsonnet 不是可安全包装的标准结构，已停止导出，避免生成损坏皮肤');
+    }
+    const dir = mainRel.slice(0, mainRel.length - 'main.jsonnet'.length);
+    const backupRel = dir + 'main.editor-original.jsonnet';
+    const overlayRel = dir + 'editor_animation_overlay.libsonnet';
+    const configRel = dir + 'editor_animation_config.libsonnet';
+    if (!alreadyInstalled) {
+      if (model.rawFiles.has(backupRel) || model.textOverrides.has(backupRel)) {
+        throw new Error('皮肤内已有 main.editor-original.jsonnet，无法安全安装动画覆盖层');
+      }
+      model.textOverrides.set(backupRel, mainText);
+    } else if (!sourceText(backupRel)) {
+      throw new Error('动画覆盖层缺少原始 main.jsonnet 备份，已停止导出');
+    }
+    const overlaySource =
+`// Generated by 元书皮肤编辑器；用于在 jsonnet 重编译后保留可视化设置的按键动画。
+local stripAnimation(obj) = std.foldl(
+  function(acc, field)
+    if field == 'animation' then acc else acc + { [field]: obj[field] },
+  std.objectFields(obj),
+  {}
+);
+
+{
+  apply(doc, cfg):
+    local definitions = std.get(cfg, 'definitions', {});
+    local keyAnimations = std.get(cfg, 'keys', {});
+    local patched = std.foldl(
+      function(acc, key)
+        if std.objectHas(doc, key) && std.type(doc[key]) == 'object' then
+          acc + {
+            [key]: stripAnimation(doc[key]) +
+              (if std.length(keyAnimations[key]) > 0 then { animation: keyAnimations[key] } else {}),
+          }
+        else acc,
+      std.objectFields(keyAnimations),
+      {}
+    );
+    doc + definitions + patched,
+}
+`;
+    const configSource = JSON.stringify({ documents: collectAnimationOverlayDocuments() }, null, 2) + '\n';
+    const wrapperSource =
+`${ANIMATION_OVERLAY_MARKER}
+local original = import 'main.editor-original.jsonnet';
+local overlay = import 'editor_animation_overlay.libsonnet';
+local config = import 'editor_animation_config.libsonnet';
+
+{
+  [path]:
+    if path == 'config.yaml' || !std.objectHas(config.documents, path) then original[path]
+    else std.toString(overlay.apply(std.parseJson(original[path]), config.documents[path]))
+  for path in std.objectFields(original)
+}
+`;
+    model.textOverrides.set(overlayRel, overlaySource);
+    model.textOverrides.set(configRel, configSource);
+    model.textOverrides.set(mainRel, wrapperSource);
+    model.animationDirty = false;
+  }
+
   // ---------- 导出 ----------
   async function exportCskin(opts = {}) {
+    // 用户改过按键动画时，先把 main.jsonnet 包一层，保证重编译后动画仍生效。
+    prepareJsonnetAnimationOverlay();
     const zip = new JSZip();
     const prefix = model.rootPrefix || ((model.config && model.config.name ? String(model.config.name) : '皮肤') + '/');
 
-    const skip = new Set();     // 需要用新内容覆盖的 path
-    // config
-    zip.file(prefix + 'config.yaml', yamlDump(model.config));
+    const skip = new Set();     // 已写入、后续不再用原始字节覆盖的 path
+    // config：没改过就逐字节保留，避免无谓地重排/重写触发手机端解析报错
+    const rawConfig = model.rawFiles.get('config.yaml');
+    zip.file(prefix + 'config.yaml', (model.configDirty || !rawConfig) ? yamlDump(model.config) : rawConfig);
     skip.add('config.yaml');
 
-    // 键盘文件
+    // 键盘文件：只有真正改过的才重新 dump，其余逐字节保留编译产物
     for (const mode of ['light', 'dark']) {
       for (const name in model.docs[mode]) {
         const doc = model.docs[mode][name];
         const rel = `${mode}/${name}.yaml`;
         if (doc && doc.__parseError) {
           zip.file(prefix + rel, doc.__raw);
+        } else if (!model.docDirty[mode].has(name) && model.rawFiles.has(rel)) {
+          zip.file(prefix + rel, model.rawFiles.get(rel)); // 未改动 → 原始字节
         } else {
           zip.file(prefix + rel, yamlDump(doc));
         }
@@ -1031,14 +1263,24 @@ const SkinModel = (() => {
           skip.add(`${mode}/resources/${rname}.png`);
         }
         if (r.slices && Object.keys(r.slices).length) {
-          zip.file(`${prefix}${mode}/resources/${rname}.yaml`, yamlDump(r.slices));
-          skip.add(`${mode}/resources/${rname}.yaml`);
+          const sliceRel = `${mode}/resources/${rname}.yaml`;
+          const sliceBytes = (!r.slicesDirty && model.rawFiles.has(sliceRel))
+            ? model.rawFiles.get(sliceRel)
+            : yamlDump(r.slices);
+          zip.file(prefix + sliceRel, sliceBytes);
+          skip.add(sliceRel);
         }
       }
     }
 
     if (model.demoPng) { zip.file(prefix + 'demo.png', model.demoPng); skip.add('demo.png'); }
     if (model.readme != null) { zip.file(prefix + 'README.md', model.readme); skip.add('README.md'); }
+
+    // jsonnet / libsonnet 等源码改动优先于包内原始字节
+    for (const [rel, text] of model.textOverrides) {
+      zip.file(prefix + rel, text);
+      skip.add(rel);
+    }
 
     // 其余原始文件原样保留；删除 App 生成的 .keyboard 缓存（避免修改不生效）
     for (const [rel, bytes] of model.rawFiles) {
@@ -1060,14 +1302,15 @@ const SkinModel = (() => {
     });
   }
 
-  // ---------- 文本文件直接读写（原始 YAML 编辑用） ----------
+  // ---------- 文本文件直接读写（原始 YAML / jsonnet 源码编辑用） ----------
   function readTextFile(rel) {
-    if (rel === 'config.yaml') return yamlDump(model.config);
+    if (rel === 'config.yaml') return (model.textOverrides.has(rel) ? model.textOverrides.get(rel) : yamlDump(model.config));
     const mDoc = rel.match(/^(light|dark)\/([^/]+)\.yaml$/);
     if (mDoc && model.docs[mDoc[1]][mDoc[2]]) {
       const doc = model.docs[mDoc[1]][mDoc[2]];
       return doc.__parseError ? doc.__raw : yamlDump(doc);
     }
+    if (model.textOverrides.has(rel)) return model.textOverrides.get(rel);
     const bytes = model.rawFiles.get(rel);
     return bytes ? td.decode(bytes) : null;
   }
@@ -1087,9 +1330,11 @@ const SkinModel = (() => {
     const mResY = rel.match(/^(light|dark)\/resources\/([^/]+)\.yaml$/);
     if (mResY) {
       const r = model.resources[mResY[1]][mResY[2]];
-      if (r) { r.slices = yamlLoad(text, rel) || {}; }
+      if (r) { r.slices = yamlLoad(text, rel) || {}; r.slicesDirty = true; }
+      return;
     }
-    model.rawFiles.set(rel, te.encode(text));
+    // jsonnet / libsonnet 等其它文本 → 存入 textOverrides（导出时优先），支持撤销
+    model.textOverrides.set(rel, text);
   }
 
   function listTextFiles() {
@@ -1103,6 +1348,7 @@ const SkinModel = (() => {
       if (base.startsWith('.') && base.endsWith('.keyboard')) continue;
       if (/\.(yaml|yml|md|txt|json|jsonnet|libsonnet)$/i.test(rel)) out.add(rel);
     }
+    for (const rel of model.textOverrides.keys()) out.add(rel);
     return [...out].sort();
   }
 
@@ -1145,6 +1391,8 @@ const SkinModel = (() => {
       config: model.config,
       docs: model.docs,
       slices: collectSlices(),
+      textOverrides: [...model.textOverrides],
+      animationDirty: model.animationDirty,
     });
   }
   function collectSlices() {
@@ -1157,6 +1405,8 @@ const SkinModel = (() => {
     const s = JSON.parse(snap);
     model.config = s.config;
     model.docs = s.docs;
+    model.textOverrides = new Map(s.textOverrides || []);
+    model.animationDirty = !!s.animationDirty;
     for (const mode of ['light', 'dark']) {
       for (const n in s.slices[mode]) {
         if (model.resources[mode][n]) model.resources[mode][n].slices = s.slices[mode][n];
@@ -1170,6 +1420,8 @@ const SkinModel = (() => {
     model, reset, loadCskin, newSkin, exportCskin,
     setResourceImage, deleteResource, getResource,
     readTextFile, writeTextFile, listTextFiles,
+    getJsonnetPreeditInsets, setJsonnetPreeditInsets, jsonnetPreeditBinding,
+    markAnimationDirty, prepareJsonnetAnimationOverlay, hasJsonnet,
     addKeyboardDoc, removeKeyboardDoc, renameKeyboardDoc,
     snapshot, restore, yamlDump, yamlLoad,
   };
@@ -3341,13 +3593,15 @@ const Inspector = (() => {
 
   function animationEditor(container, doc, def) {
     container.innerHTML = '';
+    // 任何动画改动都标记 animationDirty：jsonnet 皮肤导出时才会生成"动画覆盖层"，重编译后动画不丢
+    const editA = (fn, raw) => { App.edit(fn, raw); SkinModel.markAnimationDirty(); };
     const names = def.animation == null ? [] : (Array.isArray(def.animation) ? [...def.animation] : [def.animation]);
 
     if (names.length) {
       container.appendChild(button('▶ 试玩动画（在预览里看效果）', () => App.testAnimation(App.selection), 'btn small'));
       container.appendChild(button('换一种效果…', () => {
         openAnimPresetPicker(p => {
-          App.edit(d => {
+          editA(d => {
             const dd = d[App.selection]; if (!dd) return;
             const n = ensurePresetAnim(d, p);
             dd.animation = [n];
@@ -3372,7 +3626,7 @@ const Inspector = (() => {
     } else {
       container.appendChild(button('＋选择一个按下动画效果（5 种）', () => {
         openAnimPresetPicker(p => {
-          App.edit(d => {
+          editA(d => {
             const dd = d[App.selection]; if (!dd) return;
             const n = ensurePresetAnim(d, p);
             dd.animation = [n];
@@ -3389,7 +3643,7 @@ const Inspector = (() => {
       const nameBtn = button(n + (doc[n] ? `（${(doc[n].animationType || '?')}）` : '（不存在）'), () => openAnimationModal(doc, n), 'ref-name');
       row.appendChild(nameBtn);
       row.appendChild(button('✕', () => {
-        App.edit(() => {
+        editA(() => {
           const l = [...names]; l.splice(i, 1);
           if (!l.length) delete def.animation; else def.animation = l;
         });
@@ -3403,7 +3657,7 @@ const Inspector = (() => {
       for (const k of existing) {
         m.body.appendChild(button(`引用已有：${k}（${doc[k].animationType}）`, () => {
           m.close();
-          App.edit(() => { def.animation = [...names, k]; });
+          editA(() => { def.animation = [...names, k]; });
           animationEditor(container, doc, def);
         }, 'pick-item'));
       }
@@ -3418,7 +3672,7 @@ const Inspector = (() => {
             cartoon: { animationType: 'cartoon', fps: 30, zPosition: 'above', images: [] },
             physics: { animationType: 'physics', duration: 0.6, images: [], startPosition: { x: 0, y: 0 }, endPosition: { x: 0, y: -10 } },
           };
-          App.edit(d => { d[n] = defaults[t]; def.animation = [...names, n]; });
+          editA(d => { d[n] = defaults[t]; def.animation = [...names, n]; });
           animationEditor(container, doc, def);
           openAnimationModal(doc, n);
         }, 'pick-item'));
@@ -3427,14 +3681,19 @@ const Inspector = (() => {
     if (names.length) {
       container.appendChild(el('div', 'hint-line', '提示：在预览里按住这个键就会播放动画；帧动画/物理动画的图片名要填「图片」页里存在的 PNG 文件名。'));
     }
+    if (SkinModel.hasJsonnet()) {
+      container.appendChild(el('div', 'hint-line',
+        '✓ 这是 jsonnet 编译型皮肤：你改的按键动画会在【导出时】自动写进一层 jsonnet「动画覆盖层」，导出后在元书里长按皮肤「运行 main.jsonnet」，动画依然保留、不会被覆盖。'));
+    }
   }
 
   // 动画图片列表编辑：手输 + 从图片库点选
   function animImagesField(a) {
+    const editA = fn => { App.edit(fn); SkinModel.markAnimationDirty(); };
     const wrap = el('div');
     const ta = el('textarea'); ta.rows = 3;
     ta.value = (a.images || []).join('\n');
-    ta.onchange = () => App.edit(() => { a.images = ta.value.split('\n').map(s => s.trim()).filter(Boolean); });
+    ta.onchange = () => editA(() => { a.images = ta.value.split('\n').map(s => s.trim()).filter(Boolean); });
     wrap.appendChild(ta);
     wrap.appendChild(button('＋从图片库选择…', () => {
       const mode = Renderer.state.mode;
@@ -3445,7 +3704,7 @@ const Inspector = (() => {
       const m2 = UI.modal('点选图片加入动画（可连续点多张作为多帧）', '400px');
       for (const n of all) {
         m2.body.appendChild(button(n, () => {
-          App.edit(() => { a.images = [...(a.images || []), n]; });
+          editA(() => { a.images = [...(a.images || []), n]; });
           ta.value = (a.images || []).join('\n');
           toast('已添加 ' + n);
         }, 'pick-item'));
@@ -3462,38 +3721,40 @@ const Inspector = (() => {
     m.body.appendChild(button('▶ 试玩（改完参数点这里立即看效果）', () => App.testAnimation(App.selection), 'btn small'));
     const box = el('div');
     m.body.appendChild(box);
+    // 改动画参数也要标 dirty，jsonnet 皮肤导出时才会写入覆盖层
+    const editA = fn => { App.edit(fn); SkinModel.markAnimationDirty(); };
 
     function draw() {
       box.innerHTML = '';
       const t = a.animationType || 'scale';
-      box.appendChild(field('动画类型', selectInput(t, [['scale', '缩放 scale'], ['cartoon', '图片帧 cartoon'], ['physics', '物理 physics']], v => { App.edit(() => { a.animationType = v; }); draw(); })));
+      box.appendChild(field('动画类型', selectInput(t, [['scale', '缩放 scale'], ['cartoon', '图片帧 cartoon'], ['physics', '物理 physics']], v => { editA(() => { a.animationType = v; }); draw(); })));
       if (t === 'scale') {
-        box.appendChild(field('缩放比例 scale', numInput(a.scale, v => App.edit(() => set(a, 'scale', v)), { step: 0.01, min: 0.1, max: 2 }),
+        box.appendChild(field('缩放比例 scale', numInput(a.scale, v => editA(() => set(a, 'scale', v)), { step: 0.01, min: 0.1, max: 2 }),
           '官方默认 0.95（=按下缩到 95%）；大于 1 是放大'));
-        box.appendChild(field('按下动画时长 pressDuration', numInput(a.pressDuration, v => App.edit(() => set(a, 'pressDuration', v)), { step: 'any', min: 0 }),
+        box.appendChild(field('按下动画时长 pressDuration', numInput(a.pressDuration, v => editA(() => set(a, 'pressDuration', v)), { step: 'any', min: 0 }),
           '官方示例写 0.85；热门皮肤常写 60~90，两种都能用'));
-        box.appendChild(field('释放动画时长 releaseDuration', numInput(a.releaseDuration, v => App.edit(() => set(a, 'releaseDuration', v)), { step: 'any', min: 0 }),
+        box.appendChild(field('释放动画时长 releaseDuration', numInput(a.releaseDuration, v => editA(() => set(a, 'releaseDuration', v)), { step: 'any', min: 0 }),
           '官方示例写 0.1；热门皮肤常写 80~190'));
-        box.appendChild(field('自动反转 isAutoReverse', checkbox(a.isAutoReverse, v => App.edit(() => { a.isAutoReverse = v; }), '勾选=按下就完整播放缩小→放大；不勾=按住时缩着，松手才放大')));
+        box.appendChild(field('自动反转 isAutoReverse', checkbox(a.isAutoReverse, v => editA(() => { a.isAutoReverse = v; }), '勾选=按下就完整播放缩小→放大；不勾=按住时缩着，松手才放大')));
       } else if (t === 'cartoon') {
-        box.appendChild(field('帧率 fps', numInput(a.fps, v => App.edit(() => set(a, 'fps', v)), { step: 1, min: 1 })));
-        box.appendChild(field('缩放比例', numInput(a.targetScale, v => App.edit(() => set(a, 'targetScale', v)), { step: 0.05 })));
-        box.appendChild(field('层级', selectInput(a.zPosition || 'above', [['above', '按键上方'], ['below', '按键下方']], v => App.edit(() => { a.zPosition = v; }))));
+        box.appendChild(field('帧率 fps', numInput(a.fps, v => editA(() => set(a, 'fps', v)), { step: 1, min: 1 })));
+        box.appendChild(field('缩放比例', numInput(a.targetScale, v => editA(() => set(a, 'targetScale', v)), { step: 0.05 })));
+        box.appendChild(field('层级', selectInput(a.zPosition || 'above', [['above', '按键上方'], ['below', '按键下方']], v => editA(() => { a.zPosition = v; }))));
         box.appendChild(field('帧图片', animImagesField(a)));
       } else {
-        box.appendChild(field('动画时长 duration', numInput(a.duration, v => App.edit(() => set(a, 'duration', v)), { step: 'any', min: 0 }), '官方示例写 0.6'));
-        box.appendChild(field('随机选图', checkbox(a.randomImage, v => App.edit(() => { a.randomImage = v; }), '')));
-        box.appendChild(field('缩放比例', numInput(a.targetScale, v => App.edit(() => set(a, 'targetScale', v)), { step: 0.05 })));
-        box.appendChild(field('起点', pointInput(a.startPosition ? { ...a.startPosition } : null, v => App.edit(() => set(a, 'startPosition', v)))));
-        box.appendChild(field('终点', pointInput(a.endPosition ? { ...a.endPosition } : null, v => App.edit(() => set(a, 'endPosition', v)))));
-        box.appendChild(field('随机偏移', pointInput(a.randomPosition ? { ...a.randomPosition } : null, v => App.edit(() => set(a, 'randomPosition', v)))));
-        box.appendChild(field('透明度变化', checkbox(a.useOpacity, v => App.edit(() => { a.useOpacity = v; }), '')));
-        box.appendChild(field('起始透明度', numInput(a.startOpacity, v => App.edit(() => set(a, 'startOpacity', v)), { step: 0.05, min: 0, max: 1 })));
-        box.appendChild(field('结束透明度', numInput(a.endOpacity, v => App.edit(() => set(a, 'endOpacity', v)), { step: 0.05, min: 0, max: 1 })));
-        box.appendChild(field('旋转', checkbox(a.useRotation, v => App.edit(() => { a.useRotation = v; }), '')));
-        box.appendChild(field('起始角度', numInput(a.startAngle, v => App.edit(() => set(a, 'startAngle', v)), { step: 5 })));
-        box.appendChild(field('结束角度', numInput(a.endAngle, v => App.edit(() => set(a, 'endAngle', v)), { step: 5 })));
-        box.appendChild(field('随机角度', numInput(a.randomAngle, v => App.edit(() => set(a, 'randomAngle', v)), { step: 5 })));
+        box.appendChild(field('动画时长 duration', numInput(a.duration, v => editA(() => set(a, 'duration', v)), { step: 'any', min: 0 }), '官方示例写 0.6'));
+        box.appendChild(field('随机选图', checkbox(a.randomImage, v => editA(() => { a.randomImage = v; }), '')));
+        box.appendChild(field('缩放比例', numInput(a.targetScale, v => editA(() => set(a, 'targetScale', v)), { step: 0.05 })));
+        box.appendChild(field('起点', pointInput(a.startPosition ? { ...a.startPosition } : null, v => editA(() => set(a, 'startPosition', v)))));
+        box.appendChild(field('终点', pointInput(a.endPosition ? { ...a.endPosition } : null, v => editA(() => set(a, 'endPosition', v)))));
+        box.appendChild(field('随机偏移', pointInput(a.randomPosition ? { ...a.randomPosition } : null, v => editA(() => set(a, 'randomPosition', v)))));
+        box.appendChild(field('透明度变化', checkbox(a.useOpacity, v => editA(() => { a.useOpacity = v; }), '')));
+        box.appendChild(field('起始透明度', numInput(a.startOpacity, v => editA(() => set(a, 'startOpacity', v)), { step: 0.05, min: 0, max: 1 })));
+        box.appendChild(field('结束透明度', numInput(a.endOpacity, v => editA(() => set(a, 'endOpacity', v)), { step: 0.05, min: 0, max: 1 })));
+        box.appendChild(field('旋转', checkbox(a.useRotation, v => editA(() => { a.useRotation = v; }), '')));
+        box.appendChild(field('起始角度', numInput(a.startAngle, v => editA(() => set(a, 'startAngle', v)), { step: 5 })));
+        box.appendChild(field('结束角度', numInput(a.endAngle, v => editA(() => set(a, 'endAngle', v)), { step: 5 })));
+        box.appendChild(field('随机角度', numInput(a.randomAngle, v => editA(() => set(a, 'randomAngle', v)), { step: 5 })));
         box.appendChild(field('图片', animImagesField(a)));
       }
     }
@@ -4672,6 +4933,25 @@ const Panels = (() => {
     const pSec = section('预编辑区 preeditStyle（正在打的拼音码那行）', false);
     const ps = doc.preeditStyle = doc.preeditStyle || {};
     pSec.body.appendChild(field('内边距（左=拼音码离左边多远，调大往右移）', insetsInput(ps.insets, v => editRegion('preeditStyle', t => { if (v) t.insets = v; else delete t.insets; }))));
+
+    // 🔗 jsonnet 联动：拼音码 / iPad 候选区位置 —— 直接写回源码，手机「运行 main.jsonnet」后不会被覆盖
+    const jpi = SkinModel.getJsonnetPreeditInsets(Renderer.state.docName);
+    if (jpi) {
+      const isCand = jpi.binding.kind === 'candidateInsets';
+      const jbox = el('div');
+      jbox.appendChild(insetsInput(jpi.values || {}, v => {
+        try {
+          App.edit(null, () => SkinModel.setJsonnetPreeditInsets(Renderer.state.docName, v || {}));
+          toast('已写入源码 ' + jpi.binding.label + '，手机重编译不丢');
+        } catch (e) { toast(e.message, true); }
+      }));
+      pSec.body.appendChild(field('🔗 ' + (isCand ? '候选区左右位置（源码联动·左右调大→往中间收）' : '拼音码位置（源码联动·左调大→往右移）'), jbox));
+      pSec.body.appendChild(el('div', 'hint-line',
+        '✓ 这是 jsonnet 编译型皮肤，此项已联动源码（' + jpi.binding.label + '）：改上下左右会直接写进 jsonnet，导出后在元书里长按皮肤「运行 main.jsonnet」也不会被覆盖。上面普通「内边距」只影响本编辑器预览。'));
+    } else if (SkinModel.hasJsonnet()) {
+      pSec.body.appendChild(el('div', 'hint-line',
+        '⚠ 这是 jsonnet 编译型皮肤，但没定位到官方模板的 preedit/candidate 源码，上面「内边距」在手机重编译后可能被覆盖，需要到「源码」页手改对应 .libsonnet。'));
+    }
     const pbg = el('div');
     pSec.body.appendChild(field('背景样式', pbg));
     Inspector.styleRefEditor(pbg, doc, ps, 'backgroundStyle', { baseName: 'preeditBackground', resolveOwner: regionOwner('preeditStyle') });
@@ -5285,8 +5565,8 @@ const Panels = (() => {
     const m = M();
 
     if (!m.demoPng) problems.push(['warn', '缺少 demo.png 封面（导入 App 必须）——在「皮肤信息」页生成']);
-    if ([...m.rawFiles.keys()].some(p => p.startsWith('jsonnet/'))) {
-      problems.push(['warn', '此皮肤是 jsonnet 编译型（带 jsonnet 文件夹）。⚠ 实测：手机会优先从 jsonnet 源码「重新生成」键盘，本编辑器改的成品很可能被覆盖、在手机上不生效。这类皮肤要可靠修改得动 jsonnet 源码并「运行 main.jsonnet」；本编辑器最适合改「纯 YAML 皮肤」（没有 jsonnet 文件夹的）。']);
+    if (SkinModel.hasJsonnet()) {
+      problems.push(['info', '此皮肤是 jsonnet 编译型（带 jsonnet 文件夹）。手机导入后会从 jsonnet 源码「重新生成」键盘。本编辑器已做源码联动：①「拼音码/候选区位置」会直接写进 jsonnet 源码；②「按键动画」导出时会生成 jsonnet 覆盖层——这两类改动在手机「运行 main.jsonnet」后仍然生效。其它未标「源码联动」的改动（颜色、通知等）仍可能被重编译覆盖，需要到「源码」页手改对应 .libsonnet。导出时未改动的文件会原样保留，不会破坏皮肤。']);
     }
     // 九键（T9）提示：需要输入方案配合
     {
@@ -5395,7 +5675,7 @@ const Panels = (() => {
       const warns = problems.filter(p => p[0] === 'warn');
       container.appendChild(el('div', 'panel-hint', `发现 ${errs.length} 个错误、${warns.length} 个提醒`));
       for (const [lvl, msg] of problems) {
-        container.appendChild(el('div', 'vld-item ' + lvl, (lvl === 'error' ? '✕ ' : '⚠ ') + msg));
+        container.appendChild(el('div', 'vld-item ' + lvl, (lvl === 'error' ? '✕ ' : lvl === 'info' ? 'ℹ️ ' : '⚠ ') + msg));
       }
     }
     container.appendChild(button('重新检查', () => buildValidatePanel(container), 'btn small'));
@@ -5426,7 +5706,14 @@ const Panels = (() => {
       }
     }, 'btn');
     container.appendChild(save);
+    if (SkinModel.model.textOverrides.has(cur)) {
+      container.appendChild(el('div', 'hint-line', '● 这个文件已被编辑器改过（导出时用你的新内容）。'));
+    }
     container.appendChild(el('div', 'hint-line', '这里能改皮肤包里的任何文本文件——界面里没做到的功能都可以在这直接写。'));
+    if (/\.(jsonnet|libsonnet)$/i.test(cur)) {
+      container.appendChild(el('div', 'hint-line',
+        '📌 这是 jsonnet 源码。改完导出后，在元书里长按该皮肤「运行 main.jsonnet」，才会用新源码重新生成键盘。常改的：Constants/Keyboard.libsonnet（预编辑区/各区高度/按键定义）、Components/*.libsonnet（各键盘组件）。'));
+    }
   }
 
   return { buildFilesPanel, buildGlobalPanel, buildLayoutPanel, buildConfigPanel, buildValidatePanel, buildSourcePanel };
@@ -6693,6 +6980,7 @@ const App = (() => {
         m.docDirty[mode].add(name);
       }
     }
+    SkinModel.markAnimationDirty();
     renderAll();
     return { keys, boards: boards / 2 };
   }
@@ -6716,6 +7004,7 @@ const App = (() => {
         m.docDirty[mode].add(name);
       }
     }
+    SkinModel.markAnimationDirty();
     renderAll();
     return keys;
   }
