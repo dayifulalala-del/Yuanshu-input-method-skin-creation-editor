@@ -3598,11 +3598,11 @@ const Inspector = (() => {
   }
 
   // ============ 按下动画效果库 ============
-  // 注意：官方文档示例的时长是 0.85/0.1 这种小数，而实测流行皮肤（喜乐/好春光）用 60/80。
-  // 两种风格都提供，预览引擎两种都能播放；哪种在真机生效以实测为准。
+  // 时长单位是"毫秒"。实测流行皮肤（喜乐/好春光）都用 50~190 这种数值；
+  // 用 0.85/0.1 这种"秒"的小数在真机上时长≈0、看不到动画，所以全部统一用毫秒。
   const ANIM_PRESETS = [
-    { id: 'official', animName: 'scaleAnimation', name: '官方文档示例 ★', desc: '与官方文档完全一致的参数（scale 0.95 / 0.85 / 0.1）',
-      def: { animationType: 'scale', isAutoReverse: true, scale: 0.95, pressDuration: 0.85, releaseDuration: 0.1 } },
+    { id: 'official', animName: 'scaleAnimation', name: '轻快（推荐）★', desc: '轻微缩小、干脆利落（scale 0.95 / 60 / 90 毫秒·流行皮肤同款）',
+      def: { animationType: 'scale', isAutoReverse: true, scale: 0.95, pressDuration: 60, releaseDuration: 90 } },
     { id: 'pressLight',   name: '轻按缩小',   desc: '轻微缩小，干脆利落（流行皮肤参数风格）',
       def: { animationType: 'scale', isAutoReverse: true, scale: 0.95, pressDuration: 50, releaseDuration: 80 } },
     { id: 'pressClassic', name: '经典回弹',   desc: '明显但不夸张（与热门皮肤「喜乐」同款参数风格）',
@@ -3715,7 +3715,7 @@ const Inspector = (() => {
           while (doc[n]) n = t + 'Animation' + i++;
           // 默认值与官方文档示例保持一致
           const defaults = {
-            scale: { animationType: 'scale', isAutoReverse: true, scale: 0.95, pressDuration: 0.85, releaseDuration: 0.1 },
+            scale: { animationType: 'scale', isAutoReverse: true, scale: 0.95, pressDuration: 60, releaseDuration: 90 },
             cartoon: { animationType: 'cartoon', fps: 30, zPosition: 'above', images: [] },
             physics: { animationType: 'physics', duration: 0.6, images: [], startPosition: { x: 0, y: 0 }, endPosition: { x: 0, y: -10 } },
           };
@@ -3778,10 +3778,10 @@ const Inspector = (() => {
       if (t === 'scale') {
         box.appendChild(field('缩放比例 scale', numInput(a.scale, v => editA(() => set(a, 'scale', v)), { step: 0.01, min: 0.1, max: 2 }),
           '官方默认 0.95（=按下缩到 95%）；大于 1 是放大'));
-        box.appendChild(field('按下动画时长 pressDuration', numInput(a.pressDuration, v => editA(() => set(a, 'pressDuration', v)), { step: 'any', min: 0 }),
-          '官方示例写 0.85；热门皮肤常写 60~90，两种都能用'));
-        box.appendChild(field('释放动画时长 releaseDuration', numInput(a.releaseDuration, v => editA(() => set(a, 'releaseDuration', v)), { step: 'any', min: 0 }),
-          '官方示例写 0.1；热门皮肤常写 80~190'));
+        box.appendChild(field('按下动画时长 pressDuration（毫秒）', numInput(a.pressDuration, v => editA(() => set(a, 'pressDuration', v)), { step: 1, min: 1 }),
+          '单位毫秒，常写 50~90。别写 0.85 这种小数——真机上会≈0、看不到动画'));
+        box.appendChild(field('释放动画时长 releaseDuration（毫秒）', numInput(a.releaseDuration, v => editA(() => set(a, 'releaseDuration', v)), { step: 1, min: 1 }),
+          '单位毫秒，常写 80~190'));
         box.appendChild(field('自动反转 isAutoReverse', checkbox(a.isAutoReverse, v => editA(() => { a.isAutoReverse = v; }), '勾选=按下就完整播放缩小→放大；不勾=按住时缩着，松手才放大')));
       } else if (t === 'cartoon') {
         box.appendChild(field('帧率 fps', numInput(a.fps, v => editA(() => set(a, 'fps', v)), { step: 1, min: 1 })));
@@ -5276,8 +5276,9 @@ const Panels = (() => {
       ['current', '仅当前这个键盘'],
     ], v => { aScope = v; })));
     animSec.body.appendChild(el('div', 'hint-line', '自己拖滑块调出想要的手感，再点下面的按钮应用到全部按键：'));
-    // 自定义滑块
-    let aScale = 0.9, aPress = 0.08, aRelease = 0.12;
+    // 自定义滑块。⚠ 时长单位是"毫秒"——实测流行皮肤都用 50~190 这种数值，
+    // 之前误用秒(0.08)会让手机上时长≈0、动画看不见，这里改回毫秒。
+    let aScale = 0.9, aPress = 60, aRelease = 90;
     const mkSlider = (label, min, max, step, val, onIn) => {
       const wrap = el('div', 'slider-row');
       const rng = el('input'); rng.type = 'range'; rng.min = min; rng.max = max; rng.step = step; rng.value = val;
@@ -5288,8 +5289,8 @@ const Panels = (() => {
       return field(label, wrap);
     };
     animSec.body.appendChild(mkSlider('缩放比例（0.9=按下缩到九成；大于1=按下变大）', 0.6, 1.3, 0.01, aScale, v => aScale = v));
-    animSec.body.appendChild(mkSlider('按下时长（秒·越大越慢）', 0.01, 0.5, 0.01, aPress, v => aPress = v));
-    animSec.body.appendChild(mkSlider('回弹时长（秒）', 0.01, 0.5, 0.01, aRelease, v => aRelease = v));
+    animSec.body.appendChild(mkSlider('按下时长（毫秒·越大越慢，常用 50~90）', 20, 300, 5, aPress, v => aPress = v));
+    animSec.body.appendChild(mkSlider('回弹时长（毫秒·常用 80~190）', 20, 400, 5, aRelease, v => aRelease = v));
     animSec.body.appendChild(UI.button('✅ 用上面滑块的参数应用到全部按键', () => {
       const def = { animationType: 'scale', isAutoReverse: true, scale: aScale, pressDuration: aPress, releaseDuration: aRelease };
       const r = App.applyAnimationEverywhere({ editorCustomScaleAnimation: def }, aScope);
