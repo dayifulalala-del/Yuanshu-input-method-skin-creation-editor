@@ -1170,14 +1170,43 @@ const SkinModel = (() => {
     return { configYaml, documents };
   }
 
+  // 累积合并：把"上次导出的覆盖层配置"与"本次 diff"合并，本次优先。
+  // 为什么需要：已装过覆盖层的皮肤，包内成品 = 源码 + 上次 patch；本次直接 diff
+  // 只会得到"本次改动"，会漏掉往次改过、这次没再动的键（如按键动画）→ 重编译后被源码还原。
+  function mergeOverlayConfig(oldCfg, newCfg) {
+    const oDocs = (oldCfg && oldCfg.documents) || {};
+    const nDocs = (newCfg && newCfg.documents) || {};
+    const out = { configYaml: newCfg.configYaml != null ? newCfg.configYaml : (oldCfg && oldCfg.configYaml != null ? oldCfg.configYaml : null), documents: {} };
+    const paths = new Set([...Object.keys(oDocs), ...Object.keys(nDocs)]);
+    for (const p of paths) {
+      const o = oDocs[p] || { patch: {}, deleted: [] };
+      const n = nDocs[p] || { patch: {}, deleted: [] };
+      const patch = Object.assign({}, o.patch || {}, n.patch || {});
+      for (const k of (n.deleted || [])) delete patch[k]; // 本次删掉的键从 patch 移除
+      const deleted = [...new Set([...(o.deleted || []), ...(n.deleted || [])])].filter(k => !(k in patch));
+      if (Object.keys(patch).length || deleted.length) out.documents[p] = { patch, deleted };
+    }
+    return out;
+  }
+
   // 导出时调用：只要有任何改动（或已装过覆盖层），就把 main.jsonnet 包一层。
   function prepareJsonnetOverlay() {
     const mainRel = findSourcePath('jsonnet/main.jsonnet');
     if (!mainRel) return;
     const mainText = sourceText(mainRel);
     const alreadyInstalled = mainText && (mainText.includes(OVERLAY_MARKER) || mainText.includes(OLD_ANIM_MARKER));
-    const ov = collectOverlayConfig();
-    const hasChange = ov.configYaml != null || Object.keys(ov.documents).length > 0 || model.animationDirty;
+    let ov = collectOverlayConfig();
+    // 已装过覆盖层：与上次的覆盖层配置累积合并，避免丢失往次改动
+    if (alreadyInstalled) {
+      const dir0 = mainRel.slice(0, mainRel.length - 'main.jsonnet'.length);
+      const oldTxt = sourceText(dir0 + 'editor_overlay_config.libsonnet');
+      let oldCfg = null;
+      if (oldTxt) { try { oldCfg = JSON.parse(oldTxt); } catch (e) { oldCfg = null; } }
+      if (oldCfg) ov = mergeOverlayConfig(oldCfg, ov);
+      // config.yaml 是整体覆盖：装了覆盖层就用当前完整 config，保证往次 config 改动不丢
+      ov.configYaml = JSON.parse(JSON.stringify(model.config || {}));
+    }
+    const hasChange = ov.configYaml != null || Object.keys(ov.documents).length > 0 || model.animationDirty || alreadyInstalled;
     if (!hasChange && !alreadyInstalled) return;
     if (!alreadyInstalled && (!mainText.includes('std.toString') || !mainText.includes('config.yaml'))) {
       throw new Error('这个皮肤的 main.jsonnet 不是可安全包装的标准结构，已停止导出，避免生成损坏皮肤');
