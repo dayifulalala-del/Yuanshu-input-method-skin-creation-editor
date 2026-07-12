@@ -5240,6 +5240,25 @@ const Panels = (() => {
     container.appendChild(field('编辑哪个区域', areaSel));
 
     const areaKey = App.layoutArea || 'keyboardLayout';
+
+    // 横屏分体键盘：一键把键盘拆成左右两半（照图1）
+    if (areaKey === 'keyboardLayout' && Array.isArray(doc.keyboardLayout)) {
+      const splitSec = section('🔀 分体键盘（把键盘拆成左右两半，像 iOS 分体 / 图1）', false);
+      let gapVal = '0.14', scopeVal = 'current';
+      splitSec.body.appendChild(field('中间空档大小', selectInput('0.14', [['0.1', '窄'], ['0.14', '中（推荐）'], ['0.24', '宽']], v => gapVal = v)));
+      splitSec.body.appendChild(field('应用到', selectInput('current', [['current', '只当前这个键盘'], ['landscape', '所有横屏键盘（拼音/数字/符号）']], v => scopeVal = v)));
+      splitSec.body.appendChild(button('🔀 拆成左右分体', () => {
+        const r = App.splitKeyboard({ gap: parseFloat(gapVal), dup: true, scope: scopeVal });
+        if (!r.boards) { toast('没有可拆分的行（可能已经是分体了）', true); return; }
+        buildLayoutPanel(container);
+        toast(`已拆成分体：${r.boards} 个键盘✓ 中间键已左右各放一份。不满意点顶部↩撤销`);
+      }, 'btn'));
+      splitSec.body.appendChild(el('div', 'hint-line',
+        '把每一行从中间拆成左右两半、中间留空档，中间那颗键（g/h、v/b…）左右各放一份，就是图1的效果。' +
+        '按键会等比缩小腾出空档。改完导出即可；jsonnet 皮肤记得导入后「运行 main.jsonnet」，分体会随覆盖层保留。要还原：点顶部↩撤销。'));
+      container.appendChild(splitSec.root);
+    }
+
     if (!Array.isArray(doc[areaKey])) {
       container.appendChild(button('＋ 创建这个区域的布局', () => {
         App.editLayout(() => { App.currentDoc()[areaKey] = [{ HStack: { subviews: [] } }]; });
@@ -6964,6 +6983,95 @@ const App = (() => {
     return names;
   }
 
+  // ---------- 横屏分体键盘 ----------
+  // 把每一行从中点拆成左右两半，中间插一段透明间隔；奇数行把中间那颗键左右各放一份
+  // （照 iOS 原生分体：g/h、v/b 两边都有）。整行按键等比缩小，腾出中间空档。
+  const SPLIT_GAP_CELL = 'splitGapButton';
+  const SPLIT_GAP_STYLE = 'splitGapStyle';
+  function splitFracToNum(w) {
+    if (w == null) return null;
+    if (typeof w === 'number') return w;
+    const s = String(w).trim();
+    if (s.includes('/')) { const [a, b] = s.split('/'); const n = parseFloat(a), d = parseFloat(b); return (isFinite(n) && isFinite(d) && d) ? n / d : null; }
+    const f = parseFloat(s); return isFinite(f) ? f : null;
+  }
+  function splitNumToFrac(v) { return (Math.round(v * 1125 * 1000) / 1000) + '/1125'; }
+  function splitScaleWidth(w, k) {
+    const s = String(w);
+    if (s.includes('/')) { const [a, b] = s.split('/'); return (Math.round(parseFloat(a) * k * 1000) / 1000) + '/' + b; }
+    return splitNumToFrac(splitFracToNum(w) * k);
+  }
+  function splitRowSubviews(subs, doc, gap, dup) {
+    if (!Array.isArray(subs) || subs.length < 2) return null;
+    if (subs.some(s => s && s.Cell === SPLIT_GAP_CELL)) return null; // 已经是分体
+    const n = subs.length;
+    const leftCount = Math.ceil(n / 2);
+    const rightStart = dup ? Math.floor(n / 2) : Math.ceil(n / 2);
+    const left = subs.slice(0, leftCount);
+    const right = subs.slice(rightStart);
+    // 全是固定宽度的键 → 等比缩小腾出空档；含弹性键（如空格）→ 不缩，弹性键自动吸收剩余空间
+    const refs = [...left, ...right].filter(s => s && s.Cell != null);
+    const widths = refs.map(s => { const def = doc[s.Cell]; return def && def.size ? splitFracToNum(def.size.width) : null; });
+    const hasFlex = widths.some(w => w == null);
+    if (!hasFlex) {
+      const Tf = widths.reduce((a, b) => a + (b || 0), 0);
+      if (Tf > 0) {
+        const scale = (1 - gap) / Tf;
+        const done = new Set();
+        for (const s of refs) {
+          if (done.has(s.Cell)) continue; done.add(s.Cell);
+          const def = doc[s.Cell];
+          if (def && def.size && def.size.width != null) def.size.width = splitScaleWidth(def.size.width, scale);
+        }
+      }
+    }
+    return [...left, { Cell: SPLIT_GAP_CELL }, ...right];
+  }
+  function splitDocKeyboard(doc, gap, dup) {
+    if (!doc || doc.__parseError || !Array.isArray(doc.keyboardLayout)) return false;
+    let changed = false;
+    const newLayout = doc.keyboardLayout.map(row => {
+      const kind = row && row.HStack ? 'HStack' : (row && row.VStack ? 'VStack' : null);
+      if (!kind) return row;
+      const cont = row[kind];
+      const ns = splitRowSubviews(cont.subviews || [], doc, gap, dup);
+      if (!ns) return row;
+      changed = true;
+      return { [kind]: Object.assign({}, cont, { subviews: ns }) };
+    });
+    if (!changed) return false;
+    doc[SPLIT_GAP_STYLE] = { buttonStyleType: 'geometry', normalColor: '#00000000' };
+    doc[SPLIT_GAP_CELL] = { size: { width: splitNumToFrac(gap) }, backgroundStyle: SPLIT_GAP_STYLE, action: { character: '' } };
+    doc.keyboardLayout = newLayout;
+    return true;
+  }
+  // scope: 'current' 只当前键盘 | 'landscape' 所有横屏键盘（名字含 landscape）
+  function splitKeyboard(opts) {
+    opts = opts || {};
+    const gap = opts.gap != null ? opts.gap : 0.14;
+    const dup = opts.dup !== false;
+    const m = M();
+    let names;
+    if (opts.scope === 'landscape') {
+      names = [...new Set([...Object.keys(m.docs.light), ...Object.keys(m.docs.dark)])].filter(n => /landscape/i.test(n));
+    } else {
+      names = [Renderer.state.docName].filter(Boolean);
+    }
+    if (!names.length) return { boards: 0, names: [] };
+    pushUndo();
+    let boards = 0;
+    const done = [];
+    for (const name of names) {
+      let any = false;
+      for (const mode of ['light', 'dark']) {
+        if (splitDocKeyboard(m.docs[mode][name], gap, dup)) { m.docDirty[mode].add(name); any = true; }
+      }
+      if (any) { boards++; done.push(name); }
+    }
+    renderAll();
+    return { boards, names: done };
+  }
+
   // defsMap: {动画名: 动画定义对象}；scope: 'all' 所有键盘 | 'current' 当前键盘
   // 把动画定义写进每个键盘文件（浅+深），并让每个按键引用它
   function applyAnimationEverywhere(defsMap, scope) {
@@ -7664,7 +7772,7 @@ const App = (() => {
     currentDoc, edit, commit, batchEdit, editLayout, undo, redo,
     renderAll, renderPreview, refreshLeftPanel, refreshInspector, gotoTab,
     importFile, exportFile, loadFromUrl, testAnimation,
-    applyAnimationEverywhere, removeAnimationEverywhere,
+    applyAnimationEverywhere, removeAnimationEverywhere, splitKeyboard,
     afterLoad,
     get leftTab() { return app.leftTab; },
     set leftTab(v) { app.leftTab = v; },
