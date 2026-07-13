@@ -4386,14 +4386,14 @@ const Inspector = (() => {
       }, 'btn small'));
       quickSec.body.appendChild(el('div', 'hint-line', '取消后，下面的「按键底色/文字颜色」就能正常单独改这个键了。'));
     }
-    // 回车键专用：只统一"变化时"的文字颜色（保留发送/搜索字样和背景，只把变色时的文字色改成和普通键一样）
+    // 回车键专用：一键修复——不变蓝 + 随场景显示发送/搜索/换行 + 文字色深浅自适应
     if (isReturnKey) {
-      quickSec.body.appendChild(button('🔤 回车键变化时，文字颜色跟普通键一致（修复变色时文字色不一样）', () => {
+      quickSec.body.appendChild(button('🔧 一键修复回车键（不变蓝·随场景显示发送/搜索·文字深浅自适应）', () => {
         const n = App.unifyReturnKeyTextColorEverywhere();
         showKey(container, doc, keyName);
-        toast(n ? `已把所有键盘回车键"变化时"的文字颜色统一成键盘普通文字色（改了 ${n} 处·含浅深）` : '没找到可统一的回车键文字样式', !n);
+        toast(n ? `已修复所有键盘回车键（改了 ${n} 处·含浅深）：背景不再变蓝、随场景显示发送/搜索/换行、文字浅色黑深色白` : '没找到回车键文字样式', !n);
       }, 'btn small'));
-      quickSec.body.appendChild(el('div', 'hint-line', '这个只改"回车键变化时（发送/搜索）"的文字颜色，让它和其它按键的文字一个颜色；发送/搜索字样和背景都保留。'));
+      quickSec.body.appendChild(el('div', 'hint-line', '点这个：回车键"可发送"时背景不变蓝（和换行时一样），文字自动显示"发送/搜索/换行"，文字颜色浅色模式黑、深色模式白，各自跟键盘一致。'));
     }
 
     const bgRef0 = typeof def.backgroundStyle === 'string' ? doc[def.backgroundStyle] : null;
@@ -7544,6 +7544,18 @@ const App = (() => {
     return null;
   }
   // 把所有键盘（浅+深）回车键"变化时"的文字颜色统一成该键盘的普通文字色
+  // 取条件样式里的"默认(换行)状态"样式名（conditionValue 含 0 的那支），或字符串本身
+  function pickDefaultStateStyleName(ref) {
+    if (typeof ref === 'string') return ref;
+    if (Array.isArray(ref)) {
+      let pick = ref.find(x => x && Array.isArray(x.conditionValue) && x.conditionValue.map(Number).includes(0) && x.styleName != null);
+      if (!pick) pick = ref.find(x => x && x.styleName != null);
+      if (pick) return Array.isArray(pick.styleName) ? pick.styleName[0] : pick.styleName;
+    }
+    return null;
+  }
+  // 一键修复回车键：不变蓝（背景=普通换行态背景）+ 文字随场景显示发送/搜索/换行、
+  // 颜色自动适配深浅（浅色取键盘文字色如黑、深色如白）。作用于所有键盘浅深。
   function unifyReturnKeyTextColorEverywhere() {
     const m = M();
     const docNames = [...new Set([...Object.keys(m.docs.light), ...Object.keys(m.docs.dark)])];
@@ -7552,17 +7564,26 @@ const App = (() => {
     for (const mode of ['light', 'dark']) {
       for (const name of docNames) {
         const d = m.docs[mode][name]; if (!d || d.__parseError) continue;
-        const kbColor = sampleKeyboardTextColor(d); if (!kbColor) continue;
+        const kbColor = sampleKeyboardTextColor(d);
         let touched = false;
-        const applyTo = ref => { for (const st of fgStyleObjs(d, ref)) { if (st && st.buttonStyleType !== 'geometry' && st.buttonStyleType !== 'fileImage') { st.normalColor = kbColor; n++; touched = true; } } };
+        // 把某个前景引用涉及的文字样式统一成：text=$returnKeyType（随场景动态显示）+ 键盘文字色
+        const recolorFg = ref => { for (const st of fgStyleObjs(d, ref)) { if (st && st.buttonStyleType !== 'geometry' && st.buttonStyleType !== 'fileImage') { if (st.text != null) st.text = '$returnKeyType'; if (kbColor) { st.normalColor = kbColor; st.highlightColor = kbColor; } n++; touched = true; } } };
         for (const kn of collectLayoutKeys(d)) {
           const dd = d[kn]; if (!dd || typeof dd !== 'object' || dd.type || dd.action !== 'enter') continue;
-          // 回车键自己的（含条件）前景 + 所有 returnKeyType 通知的前景（"发送/搜索"变化态）
-          applyTo(dd.foregroundStyle);
+          // 1) 背景去蓝：所有状态都用"换行态"的普通背景
+          const normalBg = pickDefaultStateStyleName(dd.backgroundStyle);
+          if (normalBg) dd.backgroundStyle = normalBg;
+          // 2) 前景保留（条件）结构以随场景切换，只统一文字与颜色
+          recolorFg(dd.foregroundStyle);
+          // 3) returnKeyType/自身通知：背景改普通、前景统一（这是"可发送变蓝"的真正来源）
           const targets = new Set();
           for (const nn of (dd.notification == null ? [] : (Array.isArray(dd.notification) ? dd.notification : [dd.notification]))) if (typeof nn === 'string') targets.add(nn);
           for (const k in d) { const v = d[k]; if (v && typeof v === 'object' && !Array.isArray(v) && v.notificationType === 'returnKeyType') targets.add(k); }
-          for (const nk of targets) { const ntf = d[nk]; if (ntf && typeof ntf === 'object') applyTo(ntf.foregroundStyle); }
+          for (const nk of targets) {
+            const ntf = d[nk]; if (!ntf || typeof ntf !== 'object') continue;
+            if (normalBg && ntf.backgroundStyle != null) ntf.backgroundStyle = normalBg;
+            recolorFg(ntf.foregroundStyle);
+          }
         }
         if (touched) m.docDirty[mode].add(name);
       }
