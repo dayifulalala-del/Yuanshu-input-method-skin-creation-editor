@@ -3727,6 +3727,8 @@ const Inspector = (() => {
           it.appendChild(cog);
           m.body.appendChild(it);
         }
+        m.body.appendChild(button('📥 导入自己的帧动画特效（选多张 PNG）', () => { m.close(); Panels.importCustomEffect('cartoon'); }, 'pick-item'));
+        m.body.appendChild(button('📥 导入自己的飞溅特效（选多张 PNG）', () => { m.close(); Panels.importCustomEffect('physics'); }, 'pick-item'));
         m.body.appendChild(el('div', 'hint-line', '—— 或自己新建 ——'));
       }
       for (const k of existing) {
@@ -4384,6 +4386,15 @@ const Inspector = (() => {
       }, 'btn small'));
       quickSec.body.appendChild(el('div', 'hint-line', '取消后，下面的「按键底色/文字颜色」就能正常单独改这个键了。'));
     }
+    // 回车键专用：只统一"变化时"的文字颜色（保留发送/搜索字样和背景，只把变色时的文字色改成和普通键一样）
+    if (isReturnKey) {
+      quickSec.body.appendChild(button('🔤 回车键变化时，文字颜色跟普通键一致（修复变色时文字色不一样）', () => {
+        const n = App.unifyReturnKeyTextColorEverywhere();
+        showKey(container, doc, keyName);
+        toast(n ? `已把所有键盘回车键"变化时"的文字颜色统一成键盘普通文字色（改了 ${n} 处·含浅深）` : '没找到可统一的回车键文字样式', !n);
+      }, 'btn small'));
+      quickSec.body.appendChild(el('div', 'hint-line', '这个只改"回车键变化时（发送/搜索）"的文字颜色，让它和其它按键的文字一个颜色；发送/搜索字样和背景都保留。'));
+    }
 
     const bgRef0 = typeof def.backgroundStyle === 'string' ? doc[def.backgroundStyle] : null;
     const isImgBg = bgRef0 && bgRef0.buttonStyleType === 'fileImage';
@@ -5011,6 +5022,31 @@ const Panels = (() => {
     m.body.appendChild(applyBtn);
   }
 
+  // 导入自定义特效：选多张 PNG（按名排序）→ 生成 cartoon/physics 特效 → 打开自定义窗口调参应用
+  function fileToDataURI(file) {
+    return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error('读图失败')); r.readAsDataURL(file); });
+  }
+  function importCustomEffect(type) {
+    const up = el('input'); up.type = 'file'; up.accept = 'image/png,.png'; up.multiple = true; up.style.display = 'none';
+    document.body.appendChild(up);
+    up.onchange = async () => {
+      const files = [...up.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+      up.remove();
+      if (!files.length) return;
+      const id = 'custom' + Date.now();
+      const frames = [];
+      try { for (let i = 0; i < files.length; i++) frames.push({ name: `fx_${id}_${i + 1}.png`, dataURI: await fileToDataURI(files[i]) }); }
+      catch (e) { UI.toast('导入失败：' + e.message, true); return; }
+      const def = type === 'physics'
+        ? { animationType: 'physics', duration: 700, targetScale: 0.4, randomImage: frames.length > 1, startPosition: { x: 0, y: 30 }, endPosition: { x: -5, y: -10 }, randomPosition: { x: 50, y: 15 }, useRotation: true, startAngle: 0, endAngle: 6.25, randomAngle: 2 }
+        : { animationType: 'cartoon', fps: 24, zPosition: 'below', center: { y: 0.5 } };
+      def.images = frames.map(f => f.name);
+      const fx = { id, name: '自导入特效', from: '自定义', desc: (type === 'physics' ? '自导入物理飞溅' : '自导入帧动画') + `·${frames.length}张图`, def, frames };
+      openEffectCustomizer(fx, App.selection ? 'key' : 'all');
+    };
+    up.click();
+  }
+
   function buildGlobalPanel(container) {
     container.innerHTML = '';
     const doc = App.currentDoc();
@@ -5432,8 +5468,13 @@ const Panels = (() => {
         card.appendChild(btnWrap);
         efSec.body.appendChild(card);
       }
+      // 导入自定义特效
+      const impRow = el('div'); impRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-top:6px';
+      impRow.appendChild(button('＋ 导入帧动画特效', () => importCustomEffect('cartoon'), 'btn small'));
+      impRow.appendChild(button('＋ 导入飞溅特效', () => importCustomEffect('physics'), 'btn small'));
+      efSec.body.appendChild(field('自己导入特效（选多张 PNG）', impRow));
       efSec.body.appendChild(el('div', 'hint-line',
-        'jsonnet 皮肤：导出后在元书「运行 main.jsonnet」，特效随覆盖层保留。想去掉：用上面「移除所有按键动画」。'));
+        '导入：一次选多张 PNG（按文件名顺序当帧），选"帧动画"是逐帧播放、"飞溅"是按下飞出。导入后会打开自定义窗口调大小/速度/位置。\njsonnet 皮肤：导出后在元书「运行 main.jsonnet」，特效随覆盖层保留。想去掉：用上面「移除所有按键动画」。'));
       container.appendChild(efSec.root);
     }
 
@@ -5964,7 +6005,7 @@ const Panels = (() => {
     }
   }
 
-  return { buildFilesPanel, buildGlobalPanel, buildLayoutPanel, buildConfigPanel, buildValidatePanel, buildSourcePanel, openEffectCustomizer };
+  return { buildFilesPanel, buildGlobalPanel, buildLayoutPanel, buildConfigPanel, buildValidatePanel, buildSourcePanel, openEffectCustomizer, importCustomEffect };
 })();
 
 </script>
@@ -7476,6 +7517,60 @@ const App = (() => {
     toast(`已取消 ${n} 处按键的按下颜色`);
   }
 
+  // ---------- 回车键"变化时"文字颜色统一（修复变化时文字色和普通键不一致）----------
+  function fgStyleObjs(d, ref) {
+    const out = [];
+    if (ref == null) return out;
+    if (typeof ref === 'string') { const s = d[ref]; if (s && typeof s === 'object') out.push(s); }
+    else if (Array.isArray(ref)) { for (const it of ref) { if (!it || typeof it !== 'object') continue; if (it.styleName) { const s = d[it.styleName]; if (s && typeof s === 'object') out.push(s); } else out.push(it); } }
+    else if (typeof ref === 'object') out.push(ref);
+    return out;
+  }
+  // 取"键盘普通文字颜色"：优先普通字母键的前景 normalColor
+  function sampleKeyboardTextColor(d) {
+    const colorOf = kn => {
+      const dd = d[kn]; if (!dd || typeof dd !== 'object' || dd.type) return null;
+      for (const st of fgStyleObjs(d, dd.foregroundStyle)) {
+        if (st && st.normalColor != null && (st.buttonStyleType === 'text' || st.text != null || st.buttonStyleType == null)) return st.normalColor;
+      }
+      return null;
+    };
+    for (const kn of collectLayoutKeys(d)) {
+      const act = d[kn] && d[kn].action;
+      const isChar = (act && typeof act === 'object' && typeof act.character === 'string' && /^[a-zA-Z]$/.test(act.character)) || (typeof act === 'string' && /^[a-z]$/i.test(act));
+      if (isChar) { const c = colorOf(kn); if (c) return c; }
+    }
+    for (const kn of collectLayoutKeys(d)) { const c = colorOf(kn); if (c) return c; }
+    return null;
+  }
+  // 把所有键盘（浅+深）回车键"变化时"的文字颜色统一成该键盘的普通文字色
+  function unifyReturnKeyTextColorEverywhere() {
+    const m = M();
+    const docNames = [...new Set([...Object.keys(m.docs.light), ...Object.keys(m.docs.dark)])];
+    pushUndo();
+    let n = 0;
+    for (const mode of ['light', 'dark']) {
+      for (const name of docNames) {
+        const d = m.docs[mode][name]; if (!d || d.__parseError) continue;
+        const kbColor = sampleKeyboardTextColor(d); if (!kbColor) continue;
+        let touched = false;
+        const applyTo = ref => { for (const st of fgStyleObjs(d, ref)) { if (st && st.buttonStyleType !== 'geometry' && st.buttonStyleType !== 'fileImage') { st.normalColor = kbColor; n++; touched = true; } } };
+        for (const kn of collectLayoutKeys(d)) {
+          const dd = d[kn]; if (!dd || typeof dd !== 'object' || dd.type || dd.action !== 'enter') continue;
+          // 回车键自己的（含条件）前景 + 所有 returnKeyType 通知的前景（"发送/搜索"变化态）
+          applyTo(dd.foregroundStyle);
+          const targets = new Set();
+          for (const nn of (dd.notification == null ? [] : (Array.isArray(dd.notification) ? dd.notification : [dd.notification]))) if (typeof nn === 'string') targets.add(nn);
+          for (const k in d) { const v = d[k]; if (v && typeof v === 'object' && !Array.isArray(v) && v.notificationType === 'returnKeyType') targets.add(k); }
+          for (const nk of targets) { const ntf = d[nk]; if (ntf && typeof ntf === 'object') applyTo(ntf.foregroundStyle); }
+        }
+        if (touched) m.docDirty[mode].add(name);
+      }
+    }
+    renderAll();
+    return n;
+  }
+
   function renderAll() {
     renderPreview();
     refreshLeftPanel();
@@ -8075,7 +8170,7 @@ const App = (() => {
     currentDoc, edit, commit, batchEdit, editLayout, undo, redo,
     renderAll, renderPreview, refreshLeftPanel, refreshInspector, gotoTab,
     importFile, exportFile, loadFromUrl, testAnimation,
-    applyAnimationEverywhere, removeAnimationEverywhere, splitKeyboard, applyEffectPreset,
+    applyAnimationEverywhere, removeAnimationEverywhere, splitKeyboard, applyEffectPreset, unifyReturnKeyTextColorEverywhere,
     afterLoad,
     get leftTab() { return app.leftTab; },
     set leftTab(v) { app.leftTab = v; },
