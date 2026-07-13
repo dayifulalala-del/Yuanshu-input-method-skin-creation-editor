@@ -648,6 +648,7 @@ textarea.err, input.err { border-color: #e5484d; }
   <button class="btn" id="btnUndo" title="Ctrl+Z">↩ 撤销</button>
   <button class="btn" id="btnRedo" title="Ctrl+Y">↪ 重做</button>
   <button class="btn" id="btnRandomPress" title="给每个按键一个随机的按下颜色（导出后手机上同样生效）">🎲 按下随机色</button>
+  <button class="btn" id="btnClearPress" title="取消所有键盘全部按键的按下颜色（撤销随机色/按下色，按键底色不动）">🚫 取消按下色</button>
   <span class="gap"></span>
   <select id="selDevice" title="设备与方向">
     <option value="iPhone-portrait">iPhone 17 Pro Max 竖屏</option>
@@ -3716,10 +3717,14 @@ const Inspector = (() => {
         for (const fx of fxPresets) {
           const it = button('', async () => {
             m.close();
-            try { await App.applyEffectPreset(fx, 'key'); animationEditor(container, doc, def); setTimeout(() => App.testAnimation(App.selection), 150); toast(`已给这个键加特效「${fx.name}」`); }
+            try { await App.applyEffectPreset(fx, 'key'); animationEditor(container, doc, def); setTimeout(() => App.testAnimation(App.selection), 150); toast(`已给这个键加特效「${fx.name}」（可与按键动画共存）`); }
             catch (e) { toast('加特效失败：' + e.message, true); }
           }, 'pick-item');
+          const cog = el('span', 'fx-cog', ' 🎛');
+          cog.title = '自定义参数'; cog.style.cssText = 'cursor:pointer;float:right';
+          cog.onclick = (ev) => { ev.stopPropagation(); m.close(); Panels.openEffectCustomizer(fx, 'key'); };
           it.innerHTML = `<b>✨ ${fx.name}</b><br><span style="opacity:.65;font-size:12px">${fx.desc} · ${fx.frames.length}帧 · 来自「${fx.from}」</span>`;
+          it.appendChild(cog);
           m.body.appendChild(it);
         }
         m.body.appendChild(el('div', 'hint-line', '—— 或自己新建 ——'));
@@ -4953,6 +4958,59 @@ const Panels = (() => {
   }
 
   // ============ 全局样式面板 ============
+  // 按键特效自定义窗口：调大小/速度/位置/层级后再应用
+  function openEffectCustomizer(fx, scope) {
+    const d0 = JSON.parse(JSON.stringify(fx.def));
+    const isCartoon = d0.animationType === 'cartoon';
+    const cd = {
+      targetScale: d0.targetScale != null ? d0.targetScale : 1,
+      zPosition: d0.zPosition || 'below',
+      cx: (d0.center && d0.center.x != null) ? d0.center.x : 0.5,
+      cy: (d0.center && d0.center.y != null) ? d0.center.y : 0.5,
+      fps: d0.fps != null ? d0.fps : 24,
+      duration: d0.duration != null ? d0.duration : 700,
+    };
+    const m = UI.modal('🎛 自定义特效：' + fx.name, '440px');
+    const mkSlider = (label, min, max, step, get, set) => {
+      const wrap = el('div', 'slider-row');
+      const rng = el('input'); rng.type = 'range'; rng.min = min; rng.max = max; rng.step = step; rng.value = get();
+      const num = el('input'); num.type = 'number'; num.min = min; num.max = max; num.step = step; num.value = get(); num.className = 'slider-num';
+      rng.oninput = () => { num.value = rng.value; set(parseFloat(rng.value)); };
+      num.oninput = () => { rng.value = num.value; set(parseFloat(num.value)); };
+      wrap.appendChild(rng); wrap.appendChild(num);
+      return field(label, wrap);
+    };
+    m.body.appendChild(el('div', 'hint-line', `${fx.desc} · ${fx.frames.length}帧。拖滑块调好再点应用（改完导出后运行 main.jsonnet 生效）：`));
+    m.body.appendChild(mkSlider('大小（特效整体缩放，1=原始）', 0.1, 2, 0.05, () => cd.targetScale, v => cd.targetScale = v));
+    if (isCartoon) m.body.appendChild(mkSlider('播放速度 fps（越大越快）', 5, 60, 1, () => cd.fps, v => cd.fps = v));
+    else m.body.appendChild(mkSlider('时长（毫秒·越大越慢）', 200, 2000, 50, () => cd.duration, v => cd.duration = v));
+    m.body.appendChild(mkSlider('左右位置（0左·0.5中·1右）', 0, 1, 0.05, () => cd.cx, v => cd.cx = v));
+    m.body.appendChild(mkSlider('上下位置（0上·0.5中·1下）', 0, 1, 0.05, () => cd.cy, v => cd.cy = v));
+    m.body.appendChild(field('层级', selectInput(cd.zPosition, [['below', '在按键下方（被键盖住一部分）'], ['above', '在按键上方（盖在键上）']], v => cd.zPosition = v)));
+    const scopeOpts = [['all', '所有键盘全部按键'], ['current', '当前键盘全部按键']];
+    if (App.selection) scopeOpts.push(['key', '仅当前选中的键']);
+    let dScope = scope && scopeOpts.some(o => o[0] === scope) ? scope : 'all';
+    m.body.appendChild(field('作用范围', selectInput(dScope, scopeOpts, v => dScope = v)));
+    const applyBtn = button('✅ 应用这个特效', async () => {
+      const def = JSON.parse(JSON.stringify(d0));
+      def.targetScale = cd.targetScale;
+      def.zPosition = cd.zPosition;
+      def.center = { x: cd.cx, y: cd.cy };
+      if (isCartoon) def.fps = cd.fps; else def.duration = cd.duration;
+      applyBtn.disabled = true; applyBtn.textContent = '处理中…';
+      try {
+        const r = await App.applyEffectPreset(fx, dScope, def);
+        m.close();
+        UI.toast(`已应用自定义特效「${fx.name}」到 ${r.keys} 个按键✓`);
+        const cur = App.currentDoc();
+        const first = cur ? Object.keys(cur).filter(k => cur[k] && cur[k].action)[0] : null;
+        if (first) { App.selection = first; setTimeout(() => App.testAnimation(first), 150); }
+      } catch (e) { UI.toast('应用失败：' + e.message, true); applyBtn.disabled = false; applyBtn.textContent = '✅ 应用这个特效'; }
+    }, 'btn primary');
+    applyBtn.style.cssText = 'margin-top:10px;';
+    m.body.appendChild(applyBtn);
+  }
+
   function buildGlobalPanel(container) {
     container.innerHTML = '';
     const doc = App.currentDoc();
@@ -5368,7 +5426,10 @@ const Panels = (() => {
           } catch (e) { toast('加特效失败：' + e.message, true); }
           buildGlobalPanel(container);
         }, 'btn small');
-        card.appendChild(applyBtn);
+        const custBtn = button('🎛 自定义', () => openEffectCustomizer(fx, efScope), 'btn small');
+        const btnWrap = el('div'); btnWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;flex:0 0 auto';
+        btnWrap.appendChild(applyBtn); btnWrap.appendChild(custBtn);
+        card.appendChild(btnWrap);
         efSec.body.appendChild(card);
       }
       efSec.body.appendChild(el('div', 'hint-line',
@@ -5903,7 +5964,7 @@ const Panels = (() => {
     }
   }
 
-  return { buildFilesPanel, buildGlobalPanel, buildLayoutPanel, buildConfigPanel, buildValidatePanel, buildSourcePanel };
+  return { buildFilesPanel, buildGlobalPanel, buildLayoutPanel, buildConfigPanel, buildValidatePanel, buildSourcePanel, openEffectCustomizer };
 })();
 
 </script>
@@ -7230,8 +7291,22 @@ const App = (() => {
     return { boards, names: done };
   }
 
+  // 把新的动画/特效引用合并进 def.animation：只替换"同类"（动画=scale；特效=cartoon/physics），
+  // 保留另一类，这样"按键动画"和"按键特效"能共存于同一个键。
+  function animRefKind(d, n) {
+    const a = (typeof n === 'string') ? d[n] : n;
+    return (a && (a.animationType === 'cartoon' || a.animationType === 'physics')) ? 'fx' : 'anim';
+  }
+  function mergeAnimRefs(d, def, newNames) {
+    const newKinds = new Set(newNames.map(n => animRefKind(d, n)));
+    const cur = def.animation == null ? [] : (Array.isArray(def.animation) ? def.animation : [def.animation]);
+    const kept = cur.filter(n => !newKinds.has(animRefKind(d, n)) && !newNames.includes(n));
+    const merged = [...kept, ...newNames];
+    if (merged.length) def.animation = merged; else delete def.animation;
+  }
+
   // defsMap: {动画名: 动画定义对象}；scope: 'all' 所有键盘 | 'current' 当前键盘
-  // 把动画定义写进每个键盘文件（浅+深），并让每个按键引用它
+  // 把动画定义写进每个键盘文件（浅+深），并让每个按键引用它（保留已有的按键特效）
   function applyAnimationEverywhere(defsMap, scope) {
     const m = M();
     const animNames = Object.keys(defsMap);
@@ -7250,7 +7325,7 @@ const App = (() => {
         for (const k of collectLayoutKeys(d)) {
           const def = d[k];
           if (!def || typeof def !== 'object' || def.type) continue;
-          def.animation = [...animNames];
+          mergeAnimRefs(d, def, animNames); // 保留已有特效，只替换同类动画
           keys++;
         }
         m.docDirty[mode].add(name);
@@ -7300,7 +7375,8 @@ const App = (() => {
     });
   }
   // scope: 'all' 所有键盘全部按键 | 'current' 当前键盘全部按键 | 'key' 当前选中的键
-  async function applyEffectPreset(fx, scope) {
+  // customDef: 可选，自定义后的特效参数（会带上 fx 的 images）
+  async function applyEffectPreset(fx, scope, customDef) {
     const m = M();
     pushUndo();
     // 1) 特效图片加入资源（浅+深）
@@ -7309,7 +7385,8 @@ const App = (() => {
       const rname = fr.name.replace(/\.png$/i, '');
       for (const mode of ['light', 'dark']) await SkinModel.setResourceImage(mode, rname, bytes);
     }
-    // 2) 特效定义 + 给按键挂上
+    // 2) 特效定义 + 给按键挂上（保留已有的按键动画，二者共存）
+    const theDef = customDef ? Object.assign({}, customDef, { images: fx.def.images.slice() }) : fx.def;
     const defName = fx.defName || ('fxEffect_' + fx.id);
     let docNames, keyFilter = null;
     if (scope === 'key') { docNames = [Renderer.state.docName]; keyFilter = new Set([app.selection]); }
@@ -7319,9 +7396,9 @@ const App = (() => {
     for (const mode of ['light', 'dark']) {
       for (const name of docNames) {
         const d = m.docs[mode][name]; if (!d || d.__parseError) continue;
-        d[defName] = JSON.parse(JSON.stringify(fx.def));
+        d[defName] = JSON.parse(JSON.stringify(theDef));
         const targets = keyFilter ? [...keyFilter] : collectLayoutKeys(d);
-        for (const k of targets) { const def = d[k]; if (!def || typeof def !== 'object' || def.type) continue; def.animation = [defName]; keys++; }
+        for (const k of targets) { const def = d[k]; if (!def || typeof def !== 'object' || def.type) continue; mergeAnimRefs(d, def, [defName]); keys++; }
         m.docDirty[mode].add(name);
       }
     }
@@ -7369,6 +7446,34 @@ const App = (() => {
     }
     renderAll();
     toast(`已给所有键盘（拼音/数字/符号/横竖屏/iPad）共 ${done} 处按键设置随机按下色${skipped ? `，跳过 ${skipped} 个图片背景键` : ''}。所有键盘类型都生效，导出后手机一样`);
+  }
+
+  // 取消全部键盘按键的"按下颜色"（撤销随机色/按下色）
+  function clearAllPressColors() {
+    const m = M();
+    const docNames = [...new Set([...Object.keys(m.docs.light), ...Object.keys(m.docs.dark)])];
+    if (!docNames.length) { toast('先导入或新建皮肤', true); return; }
+    if (!confirm('取消所有键盘全部按键的"按下颜色"吗？（按键底色不动，只清掉按下时变的那个颜色，可撤销）')) return;
+    pushUndo();
+    let n = 0;
+    for (const mode of ['light', 'dark']) {
+      for (const name of docNames) {
+        const d = m.docs[mode][name];
+        if (!d || d.__parseError || !Array.isArray(d.keyboardLayout)) continue;
+        const seen = new Set();
+        let touched = false;
+        for (const kn of collectLayoutKeys(d)) {
+          const def = d[kn];
+          if (!def || typeof def !== 'object' || def.type) continue;
+          const ref = def.backgroundStyle;
+          const st = typeof ref === 'string' ? d[ref] : (ref && !Array.isArray(ref) ? ref : null);
+          if (st && !seen.has(st)) { seen.add(st); if (st.highlightColor != null) { delete st.highlightColor; n++; touched = true; } }
+        }
+        if (touched) m.docDirty[mode].add(name);
+      }
+    }
+    renderAll();
+    toast(`已取消 ${n} 处按键的按下颜色`);
   }
 
   function renderAll() {
@@ -7736,6 +7841,7 @@ const App = (() => {
     document.getElementById('btnUndo').onclick = undo;
     document.getElementById('btnRedo').onclick = redo;
     document.getElementById('btnRandomPress').onclick = applyRandomPressColors;
+    document.getElementById('btnClearPress').onclick = clearAllPressColors;
 
     // 界面主题（明亮/暗黑）
     const applyTheme = t => {
