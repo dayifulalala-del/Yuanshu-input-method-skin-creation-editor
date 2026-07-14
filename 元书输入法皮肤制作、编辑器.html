@@ -386,6 +386,20 @@ textarea.err, input.err { border-color: #e5484d; }
 .file-row.active .file-name { border-color: var(--accent); color: var(--accent-text); background: var(--accent-bg); }
 .file-usage { width: 100%; color: var(--text-mute); font-size: 11px; padding-left: 8px; }
 
+/* 图形搭建（卡片式行编辑） */
+.kb-visual { margin: 6px 0; display: flex; flex-direction: column; gap: 8px; }
+.kb-row { border: 1px solid var(--border); border-radius: 10px; padding: 8px; background: var(--panel2); }
+.kb-row-head { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-bottom: 7px; }
+.kb-row-title { font-weight: 600; margin-right: 4px; font-size: 12px; }
+.kb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.kb-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 7px; border: 1px solid var(--border2); border-radius: 8px; background: var(--input-bg); }
+.kb-chip.selected { outline: 2px solid var(--accent-text, #2f6feb); outline-offset: 1px; }
+.kb-chip.missing { border-color: #d9534f; }
+.kb-chip.nested { opacity: .85; font-style: italic; }
+.kb-chip-label { cursor: pointer; font-weight: 600; min-width: 16px; text-align: center; }
+.kb-chip-acts { display: inline-flex; gap: 1px; }
+.chip-mini { font-size: 11px; padding: 0 4px; line-height: 18px; min-width: 0; }
+
 /* 布局树 */
 .layout-tree { margin: 6px 0; }
 .lt-row { display: flex; align-items: center; justify-content: space-between; padding: 3px 4px; border-radius: 5px; gap: 4px; }
@@ -716,7 +730,7 @@ textarea.err, input.err { border-color: #e5484d; }
     <div id="leftTabs">
       <button class="tab active" data-tab="files">键盘</button>
       <button class="tab" data-tab="global">全局</button>
-      <button class="tab" data-tab="layout">布局树</button>
+      <button class="tab" data-tab="layout">搭键盘</button>
       <button class="tab" data-tab="res">图片</button>
       <button class="tab" data-tab="cfg">皮肤信息</button>
       <button class="tab" data-tab="check">检查</button>
@@ -5566,8 +5580,20 @@ const Panels = (() => {
       return;
     }
 
+    // 编辑方式：图形搭建（卡片式一行行，简单）/ 树形结构（可嵌套，高级）
+    const view = App.layoutView || 'visual';
+    const viewSel = el('div', 'lt-acts'); viewSel.style.cssText = 'gap:6px;margin:2px 0 6px;';
+    const mkTab = (v, label) => {
+      const b = button(label, () => { App.layoutView = v; buildLayoutPanel(container); }, 'mini-btn');
+      if (view === v) b.style.cssText = 'background:var(--accent-text,#2f6feb);color:#fff;';
+      return b;
+    };
+    viewSel.appendChild(mkTab('visual', '🎹 图形搭建'));
+    viewSel.appendChild(mkTab('tree', '🌲 树形结构'));
+    container.appendChild(field('编辑方式', viewSel));
+
     const tree = el('div', 'layout-tree');
-    container.appendChild(tree);
+    if (view === 'tree') container.appendChild(tree);
 
     function nodeRow(label, depth, actions, extraCls) {
       const row = el('div', 'lt-row' + (extraCls ? ' ' + extraCls : '') + (depth > 0 ? ' lt-depth' : ''));
@@ -5741,7 +5767,94 @@ const Panels = (() => {
       buildLayoutPanel(container);
     }
 
-    drawLevel(doc[areaKey], 0, null, -1);
+    // ---- 图形搭建：一行行卡片式（照参考编辑器「自定义键盘」） ----
+    const FN_LABEL = { space: '空格', enter: '回车', backspace: '退格', shift: 'Shift', tab: 'Tab', dismissKeyboard: '收起', nextKeyboard: '🌐', returnLastKeyboard: '返回', returnPrimaryKeyboard: '主键盘', none: '—' };
+    const KBT_LABEL = { numeric: '123', symbolic: '#+=', classifySymbolic: '符号', alphabetic: 'ABC', emojis: '😀', pinyin: '中', chinese: '中' };
+    function chipLabel(name) {
+      const def = doc[name];
+      if (!def || typeof def !== 'object') return name;
+      const a = def.action;
+      if (a && typeof a === 'object') {
+        if ('character' in a) return String(a.character);
+        if ('symbol' in a) return String(a.symbol);
+        if ('keyboardType' in a) return KBT_LABEL[a.keyboardType] || String(a.keyboardType);
+        if ('shortcut' in a) return '#' + String(a.shortcut).replace(/^#/, '');
+      }
+      if (typeof a === 'string' && FN_LABEL[a]) return FN_LABEL[a];
+      // 前景文字兜底（跳过 $动态占位）
+      const fgNames = def.foregroundStyle == null ? [] : (Array.isArray(def.foregroundStyle) ? def.foregroundStyle : [def.foregroundStyle]);
+      for (const fn of fgNames) {
+        const s = typeof fn === 'string' ? doc[fn] : fn;
+        if (s && typeof s === 'object' && typeof s.text === 'string' && s.text && !s.text.startsWith('$')) return s.text;
+      }
+      if (typeof a === 'string') return FN_LABEL[a] || a;
+      return name;
+    }
+    function chipFor(arr, idx) {
+      const name = arr[idx].Cell;
+      const def = doc[name];
+      const selected = App.selection === name;
+      const chip = el('div', 'kb-chip' + (def ? '' : ' missing') + (selected ? ' selected' : ''));
+      chip.title = name + (def ? '' : '（未定义）') + '（点一下选中，右侧编辑；选中后可移动/删除）';
+      const lab = el('span', 'kb-chip-label', chipLabel(name));
+      lab.onclick = () => { App.selection = selected ? null : name; App.renderAll(); buildLayoutPanel(container); };
+      chip.appendChild(lab);
+      // 只有选中的键才显示 ◀▶✕，让整行保持紧凑好看
+      if (selected) {
+        const acts = el('span', 'kb-chip-acts');
+        const mv = dir => () => { const j = idx + dir; if (j < 0 || j >= arr.length) return; App.editLayout(() => { [arr[idx], arr[j]] = [arr[j], arr[idx]]; }); buildLayoutPanel(container); };
+        acts.appendChild(button('◀', mv(-1), 'chip-mini'));
+        acts.appendChild(button('▶', mv(1), 'chip-mini'));
+        acts.appendChild(button('✕', () => { App.editLayout(() => { arr.splice(idx, 1); }); App.selection = null; buildLayoutPanel(container); }, 'chip-mini'));
+        chip.appendChild(acts);
+      }
+      return chip;
+    }
+    function renderVisual() {
+      const wrap = el('div', 'kb-visual');
+      container.appendChild(wrap);
+      const rows = doc[areaKey];
+      let rowNo = 0;
+      rows.forEach((item, ri) => {
+        const isH = !!item.HStack, isV = !!item.VStack;
+        const stack = isH ? item.HStack : isV ? item.VStack : null;
+        if (!stack) {
+          if (item.Cell != null) { const blk = el('div', 'kb-row'); const cs = el('div', 'kb-chips'); cs.appendChild(chipFor(rows, ri)); blk.appendChild(cs); wrap.appendChild(blk); }
+          return;
+        }
+        rowNo++;
+        const blk = el('div', 'kb-row');
+        const head = el('div', 'kb-row-head');
+        head.appendChild(el('span', 'kb-row-title', isH ? `第 ${rowNo} 行` : `第 ${rowNo} 列（竖排）`));
+        const rowMove = dir => () => { const j = ri + dir; if (j < 0 || j >= rows.length) return; App.editLayout(() => { [rows[ri], rows[j]] = [rows[j], rows[ri]]; }); buildLayoutPanel(container); };
+        head.appendChild(button('＋按键', () => { stack.subviews = stack.subviews || []; addCellFlow(stack.subviews, stack.subviews.length); }, 'mini-btn'));
+        head.appendChild(button('尺寸', () => editStackSize(stack, isH ? 'HStack' : 'VStack'), 'mini-btn'));
+        head.appendChild(button('复制行', () => { App.editLayout(() => { rows.splice(ri + 1, 0, JSON.parse(JSON.stringify(item))); }); buildLayoutPanel(container); }, 'mini-btn'));
+        head.appendChild(button('↑', rowMove(-1), 'mini-btn'));
+        head.appendChild(button('↓', rowMove(1), 'mini-btn'));
+        const del = button('✕删行', () => { if (!confirm('删除这一整行吗？')) return; App.editLayout(() => { rows.splice(ri, 1); }); buildLayoutPanel(container); }, 'mini-btn');
+        del.style.color = '#d9534f'; head.appendChild(del);
+        blk.appendChild(head);
+        const chips = el('div', 'kb-chips');
+        const subs = stack.subviews || [];
+        subs.forEach((sub, ci) => {
+          if (sub.Cell != null) chips.appendChild(chipFor(subs, ci));
+          else if (sub.HStack || sub.VStack) {
+            const c = el('div', 'kb-chip nested');
+            c.appendChild(el('span', 'kb-chip-label', '（嵌套结构）'));
+            c.appendChild(button('去树形编辑', () => { App.layoutView = 'tree'; buildLayoutPanel(container); }, 'chip-mini'));
+            chips.appendChild(c);
+          }
+        });
+        if (!subs.length) chips.appendChild(el('span', 'hint-line', '（空行，点「＋按键」加键）'));
+        blk.appendChild(chips);
+        wrap.appendChild(blk);
+      });
+      if (!rows.length) wrap.appendChild(el('div', 'hint-line', '还没有任何行。用下面的「＋整行字符键」或「＋数字行」快速铺一行，或「＋加一行」。'));
+    }
+
+    if (view === 'visual') renderVisual();
+    else drawLevel(doc[areaKey], 0, null, -1);
 
     container.appendChild(button('＋ 在最外层加一行 HStack', () => {
       App.editLayout(() => { const d = App.currentDoc(); d[areaKey] = d[areaKey] || []; d[areaKey].push({ HStack: { subviews: [] } }); });
