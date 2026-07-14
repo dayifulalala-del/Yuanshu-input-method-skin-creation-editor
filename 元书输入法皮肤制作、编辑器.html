@@ -5244,6 +5244,23 @@ const Panels = (() => {
       ['all', '整套皮肤的所有键盘（默认）'],
       ['current', '只当前这个键盘'],
     ], v => { gScope = v; })));
+    // 作用到哪些键：像参考编辑器一样，普通字符键 / 功能键 / 回车键可以分开批量改
+    let gClass = 'all';
+    function keyClass(def) {
+      if (!def || typeof def !== 'object') return 'other';
+      const a = def.action;
+      if (a === 'enter') return 'return';
+      if (typeof a === 'string') return 'function';           // 空格/删除/Shift/切换等
+      if (a && typeof a === 'object') return ('character' in a || 'symbol' in a) ? 'normal' : 'function';
+      return 'other';
+    }
+    const classMatch = def => gClass === 'all' || keyClass(def) === gClass;
+    allSec.body.appendChild(field('作用到哪些键', selectInput('all', [
+      ['all', '全部按键'],
+      ['normal', '只普通字符键（a、b、你、好…）'],
+      ['function', '只功能键（空格/切换/删除/123…）'],
+      ['return', '只回车键'],
+    ], v => { gClass = v; })));
     const curMode = Renderer.state.mode;
     allSec.body.appendChild(el('div', 'hint-line',
       `🎨 颜色类改动只作用到你当前显示的【${curMode === 'light' ? '浅色' : '深色'}】键盘——想让深浅不一样，就切到另一个模式再各自调（顶栏切换浅/深）。圆角、文字大小这类"形状"改动浅深一起改，保持一致。\n默认作用到拼音/数字/符号/横竖屏/iPad 的所有键盘。含"打字时"才出现的样式也一并改到。`));
@@ -5290,6 +5307,7 @@ const Panels = (() => {
       for (const name of collectKeyNames(d)) {
         const def = d[name];
         if (!def || typeof def !== 'object' || def.type) continue;
+        if (!classMatch(def)) continue;
         const styles = [...styleObjsOf(d, def.backgroundStyle), ...notifStyles(d, def, 'backgroundStyle')];
         for (const st of styles) { if (st && !seen.has(st)) { seen.add(st); fn(st, def, name); } }
       }
@@ -5299,6 +5317,7 @@ const Panels = (() => {
       for (const name of collectKeyNames(d)) {
         const def = d[name];
         if (!def || typeof def !== 'object' || def.type) continue;
+        if (!classMatch(def)) continue;
         const styles = [
           ...styleObjsOf(d, def.foregroundStyle),
           ...styleObjsOf(d, def.uppercasedStateForegroundStyle),
@@ -5400,6 +5419,18 @@ const Panels = (() => {
       if (v == null) return;
       gApply('阴影透明度', d => eachKeyBg(d, st => { if (st.buttonStyleType !== 'fileImage') st.shadowOpacity = v; }));
     }, { step: 0.05, min: 0, max: 1 })));
+    advSec.body.appendChild(field('全部阴影模糊(越大越虚)', UI.numInput(null, v => {
+      if (v == null) return;
+      gApply('阴影模糊', d => eachKeyBg(d, st => { if (st.buttonStyleType !== 'fileImage') st.shadowRadius = v; }));
+    }, { step: 0.5, min: 0 })));
+    advSec.body.appendChild(field('全部阴影横向偏移 x', UI.numInput(null, v => {
+      if (v == null) return;
+      gApply('阴影x', d => eachKeyBg(d, st => { if (st.buttonStyleType === 'fileImage') return; st.shadowOffset = st.shadowOffset || {}; st.shadowOffset.x = v; }));
+    }, { step: 0.5 })));
+    advSec.body.appendChild(field('全部阴影纵向偏移 y', UI.numInput(null, v => {
+      if (v == null) return;
+      gApply('阴影y', d => eachKeyBg(d, st => { if (st.buttonStyleType === 'fileImage') return; st.shadowOffset = st.shadowOffset || {}; st.shadowOffset.y = v; }));
+    }, { step: 0.5 })));
     advSec.body.appendChild(UI.button('移除全部按键的边框和阴影', () => {
       gApply('清除边框阴影', d => eachKeyBg(d, st => {
         delete st.borderSize; delete st.normalBorderColor; delete st.highlightBorderColor;
