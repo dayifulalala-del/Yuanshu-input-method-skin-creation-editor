@@ -2736,10 +2736,11 @@ const UI = (() => {
   function dimInput(value, onChange) {
     const wrap = el('div', 'dim-inp');
     const mode = el('select');
-    for (const [v, t] of [['auto', '自动'], ['pt', '点数'], ['frac', '比例(分数)']]) {
+    for (const [v, t] of [['auto', '自动(平分)'], ['pct', '百分比%'], ['pt', '固定点数'], ['frac', '分数']]) {
       const o = el('option', null, t); o.value = v; mode.appendChild(o);
     }
-    const num = el('input'); num.type = 'number'; num.step = 'any'; num.style.display = 'none';
+    const num = el('input'); num.type = 'number'; num.step = 'any'; num.style.display = 'none'; num.placeholder = '点';
+    const pct = el('input'); pct.type = 'number'; pct.step = 'any'; pct.min = '0'; pct.style.display = 'none'; pct.placeholder = '占%';
     const fa = el('input'); fa.type = 'number'; fa.step = 'any'; fa.style.display = 'none'; fa.placeholder = '分子';
     const slash = el('span', null, '/'); slash.style.display = 'none';
     const fb = el('input'); fb.type = 'number'; fb.step = 'any'; fb.style.display = 'none'; fb.placeholder = '分母';
@@ -2747,26 +2748,32 @@ const UI = (() => {
     function setMode(m) {
       mode.value = m;
       num.style.display = m === 'pt' ? '' : 'none';
+      pct.style.display = m === 'pct' ? '' : 'none';
       fa.style.display = fb.style.display = slash.style.display = m === 'frac' ? '' : 'none';
     }
+    // 兼容既有皮肤：数字=点数；{percentage}=百分比；"a/b" 分数（b=100 时按百分比显示，更直观）
     if (value == null) setMode('auto');
     else if (typeof value === 'number') { setMode('pt'); num.value = value; }
-    else if (typeof value === 'object' && value.percentage != null) { setMode('frac'); fa.value = value.percentage * 100; fb.value = 100; }
+    else if (typeof value === 'object' && value.percentage != null) { setMode('pct'); pct.value = +(value.percentage * 100).toFixed(4); }
     else {
       const s = String(value);
-      if (s.includes('/')) { setMode('frac'); const [a, b] = s.split('/'); fa.value = a; fb.value = b; }
-      else { setMode('pt'); num.value = parseFloat(s) || ''; }
+      if (s.includes('/')) {
+        const [a, b] = s.split('/');
+        if (Number(b) === 100) { setMode('pct'); pct.value = a; }
+        else { setMode('frac'); fa.value = a; fb.value = b; }
+      } else { setMode('pt'); num.value = parseFloat(s) || ''; }
     }
     function emit() {
       if (mode.value === 'auto') onChange(null);
       else if (mode.value === 'pt') onChange(num.value === '' ? null : Number(num.value));
+      else if (mode.value === 'pct') onChange(pct.value === '' ? null : `${pct.value}/100`);
       else {
         if (fa.value !== '' && fb.value !== '' && Number(fb.value) !== 0) onChange(`${fa.value}/${fb.value}`);
       }
     }
     mode.onchange = () => { setMode(mode.value); emit(); };
-    num.onchange = emit; fa.onchange = emit; fb.onchange = emit;
-    wrap.appendChild(mode); wrap.appendChild(num); wrap.appendChild(fa); wrap.appendChild(slash); wrap.appendChild(fb);
+    num.onchange = emit; pct.onchange = emit; fa.onchange = emit; fb.onchange = emit;
+    wrap.appendChild(mode); wrap.appendChild(num); wrap.appendChild(pct); wrap.appendChild(fa); wrap.appendChild(slash); wrap.appendChild(fb);
     return wrap;
   }
 
@@ -4479,6 +4486,27 @@ const Inspector = (() => {
       if (v == null) delete dd.size.width; else dd.size.width = v;
       if (!Object.keys(dd.size).length) delete dd.size;
     }))));
+    // 快速改宽：按这个键所在行的实际列数换算，"1×"≈普通键宽，一点就改，不用算分数
+    const rowCols = (() => {
+      let n = null;
+      const walk = arr => { if (!Array.isArray(arr)) return;
+        if (arr.some(it => it && it.Cell === keyName)) n = arr.filter(it => it && it.Cell != null).length;
+        for (const it of arr) { if (it && it.HStack) walk(it.HStack.subviews); if (it && it.VStack) walk(it.VStack.subviews); } };
+      for (const k of ['keyboardLayout', 'toolbarLayout', 'horizontalCandidatesLayout', 'verticalCandidatesLayout']) walk(doc[k]);
+      return n;
+    })();
+    const wBase = rowCols || 10;
+    const presetRow = el('div', 'lt-acts');
+    presetRow.style.cssText = 'flex-wrap:wrap;gap:4px;margin:2px 0 4px;';
+    const setW = frac => { editKey(dd => { dd.size = dd.size || {}; dd.size.width = frac; }); showKey(container, doc, keyName); };
+    for (const [lab, m] of [['窄0.75×', 0.75], ['标准1×', 1], ['宽1.5×', 1.5], ['特宽2×', 2]])
+      presetRow.appendChild(button(lab, () => setW(`${+(m / wBase * 100).toFixed(3)}/100`), 'mini-btn'));
+    presetRow.appendChild(button('整行100%', () => setW('100/100'), 'mini-btn'));
+    presetRow.appendChild(button('自动', () => { editKey(dd => { if (dd.size) { delete dd.size.width; if (!Object.keys(dd.size).length) delete dd.size; } }); showKey(container, doc, keyName); }, 'mini-btn'));
+    sizeSec.body.appendChild(field('快速改宽（一点即改）', presetRow));
+    sizeSec.body.appendChild(el('div', 'hint-line', rowCols
+      ? `这个键所在行有 ${rowCols} 个键，“标准1×”就是和普通键一样宽；空格键常用“特宽2×”或更宽。`
+      : '这个键还没放进任何行，按 10 键一行估算；放进布局后数字会更准。'));
     sizeSec.body.appendChild(field('高度（自动=和同列按键平分）', dimInput(def.size && def.size.height, v => editKey(dd => {
       dd.size = dd.size || {};
       if (v == null) delete dd.size.height; else dd.size.height = v;
@@ -5581,6 +5609,7 @@ const Panels = (() => {
             ['＋键', () => addCellTo(stack), '添加按键'],
             ['＋行', () => { App.editLayout(() => { stack.subviews = stack.subviews || []; stack.subviews.push({ HStack: { subviews: [] } }); }); buildLayoutPanel(container); }],
             ['＋列', () => { App.editLayout(() => { stack.subviews = stack.subviews || []; stack.subviews.push({ VStack: { subviews: [] } }); }); buildLayoutPanel(container); }],
+            ['复制', () => { App.editLayout(() => { arr.splice(i + 1, 0, JSON.parse(JSON.stringify(item))); }); buildLayoutPanel(container); }, '复制这一整行/列（含里面的键）'],
             ['↑', move(-1)], ['↓', move(1)], ['✕', remove],
           ], 'lt-stack');
           tree.appendChild(row);
@@ -5596,6 +5625,8 @@ const Panels = (() => {
               const nn = prompt('引用的按键名：', name);
               if (nn) { App.editLayout(() => { item.Cell = nn; }); buildLayoutPanel(container); }
             }, '改为引用其他按键'],
+            ['插前', () => addCellFlow(arr, i), '在这个键左边（前面）插入一个键'],
+            ['插后', () => addCellFlow(arr, i + 1), '在这个键右边（后面）插入一个键'],
             ['↑', move(-1)], ['↓', move(1)], ['✕', remove],
           ], 'lt-cell' + (missing ? ' missing' : '') + (App.selection === name ? ' selected' : ''));
           tree.appendChild(row);
@@ -5637,12 +5668,15 @@ const Panels = (() => {
     const nameTakenAnyMode = nm => bothModeDocs().some(([d]) => d[nm] != null);
     const uniqueDocName = base => { let n = base, i = 2; while (nameTakenAnyMode(n)) n = base + i++; return n; };
 
-    function addCellTo(stack) {
+    // 通用「加按键」流程：往 arr 数组的 index 位置插入（index 省略=末尾追加）
+    function addCellFlow(arr, index) {
+      if (!Array.isArray(arr)) return;
+      const at = (index == null) ? arr.length : index;
       const m = UI.modal('添加按键', '440px');
       m.body.appendChild(button('引用已有按键…', () => {
         m.close();
         pickKeyName(doc, n => {
-          App.editLayout(() => { stack.subviews = stack.subviews || []; stack.subviews.push({ Cell: n }); });
+          App.editLayout(() => { arr.splice(at, 0, { Cell: n }); });
           buildLayoutPanel(container);
         });
       }, 'pick-item'));
@@ -5657,8 +5691,7 @@ const Panels = (() => {
             d[fgn] = { buttonStyleType: 'text', text: ch, fontSize: 20, normalColor: isDark ? '#ffffff' : '#000000' };
             d[n] = { action: { character: ch }, foregroundStyle: fgn };
           }
-          stack.subviews = stack.subviews || [];
-          stack.subviews.push({ Cell: n });
+          arr.splice(at, 0, { Cell: n });
         });
         App.selection = n;
         buildLayoutPanel(container);
@@ -5676,14 +5709,36 @@ const Panels = (() => {
                 d[fgn] = { buttonStyleType: 'text', text: lab, fontSize: 14, normalColor: isDark ? '#ffffff' : '#000000' };
                 d[n] = { action: v, foregroundStyle: fgn };
               }
-              stack.subviews = stack.subviews || [];
-              stack.subviews.push({ Cell: n });
+              arr.splice(at, 0, { Cell: n });
             });
             App.selection = n;
             buildLayoutPanel(container);
           }, 'pick-item'));
         }
       }, 'pick-item'));
+    }
+    function addCellTo(stack) { stack.subviews = stack.subviews || []; addCellFlow(stack.subviews, stack.subviews.length); }
+
+    // 一键加一整行字符键：输入一串字，每个字一个新键，放进新的一行
+    function addCharRow(str) {
+      const chars = Array.from(String(str || '')).filter(c => c !== ' ' && c !== '\n' && c !== '\t');
+      if (!chars.length) return;
+      App.editLayout(() => {
+        const d = App.currentDoc();
+        const row = { HStack: { subviews: [] } };
+        for (const ch of chars) {
+          const n = uniqueDocName((ch.replace(/[^\w]/g, '_') || 'key') + 'Button');
+          const fgn = n + 'ForegroundStyle';
+          for (const [dd, isDark] of bothModeDocs()) {
+            dd[fgn] = { buttonStyleType: 'text', text: ch, fontSize: 20, normalColor: isDark ? '#ffffff' : '#000000' };
+            dd[n] = { action: { character: ch }, foregroundStyle: fgn };
+          }
+          row.HStack.subviews.push({ Cell: n });
+        }
+        d[areaKey] = d[areaKey] || [];
+        d[areaKey].push(row);
+      });
+      buildLayoutPanel(container);
     }
 
     drawLevel(doc[areaKey], 0, null, -1);
@@ -5696,7 +5751,12 @@ const Panels = (() => {
       App.editLayout(() => { const d = App.currentDoc(); d[areaKey] = d[areaKey] || []; d[areaKey].push({ VStack: { subviews: [] } }); });
       buildLayoutPanel(container);
     }, 'btn small'));
-    container.appendChild(el('div', 'hint-line', '规则：同一层里只能全用行、或全用列、或全放按键，不能混用。'));
+    container.appendChild(button('＋ 整行字符键（输入一串字，每个字一个键）', () => {
+      const s = prompt('输入这一行要放的字符（连着写，如 qwertyuiop）：', 'qwertyuiop');
+      if (s) addCharRow(s);
+    }, 'btn small'));
+    container.appendChild(button('＋ 数字行 1234567890', () => addCharRow('1234567890'), 'btn small'));
+    container.appendChild(el('div', 'hint-line', '规则：同一层里只能全用行、或全用列、或全放按键，不能混用。\n搭键盘小技巧：先用「整行字符键」快速铺好几行字母，再点某个键用「快速改宽」把空格/回车拉宽即可。'));
   }
 
   function pickKeyName(doc, cb) {
