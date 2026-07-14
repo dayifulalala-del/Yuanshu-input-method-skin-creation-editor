@@ -6590,24 +6590,37 @@ const SkinTemplate = (() => {
 
   function buildNumeric(dark) {
     const fg = dark ? '#ffffff' : '#000000';
-    const doc = buildKeyboard(dark);
-    // 复用基础样式，替换布局为数字键盘
+    const doc = buildKeyboard(dark); // 复用样式与 空格/回车(发送)/删除 键
+    // iOS 风格整宽数字键盘（照用户截图）：数字行 + 两行符号 + 拼音/空格/发送
+    // 清掉 26 键专用定义，保持文件干净
+    for (const ch of 'qwertyuiopasdfghjklzxcvbnm') { delete doc[ch + 'Button']; delete doc[ch + 'ButtonFg']; delete doc[ch + 'ButtonUpFg']; }
+    delete doc.shiftButton; delete doc.shiftFg;
+    delete doc.commaButton; delete doc.commaFg;
+    delete doc.periodButton; delete doc.periodFg;
+    delete doc.numericButton; delete doc.numericFg;
+
+    const symKey = (name, sym, label, fontSize) => {
+      doc[name] = { action: { symbol: sym }, backgroundStyle: 'keyBackgroundStyle', foregroundStyle: name + 'Fg' };
+      doc[name + 'Fg'] = textStyle(label != null ? label : sym, fontSize || 22, fg);
+      return { Cell: name };
+    };
     const layout = [];
-    const rows = [['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9'], ['back', '0', 'ret']];
-    for (const row of rows) {
-      const subviews = [];
-      for (const k of row) {
-        if (k === 'back') { subviews.push({ Cell: 'returnPinyinButton' }); continue; }
-        if (k === 'ret') { subviews.push({ Cell: 'enterButton' }); continue; }
-        const bn = 'num' + k + 'Button';
-        doc[bn] = { action: { symbol: k }, backgroundStyle: 'keyBackgroundStyle', foregroundStyle: bn + 'Fg' };
-        doc[bn + 'Fg'] = textStyle(k, 24, fg);
-        subviews.push({ Cell: bn });
-      }
-      layout.push({ HStack: { subviews } });
-    }
-    doc.returnPinyinButton = { action: 'returnPrimaryKeyboard', backgroundStyle: 'sysBackgroundStyle', foregroundStyle: 'returnPinyinFg' };
-    doc.returnPinyinFg = textStyle('返回', 16, fg);
+    // 第1行：1 2 3 4 5 6 7 8 9 0
+    layout.push({ HStack: { subviews: Array.from('1234567890').map(d => symKey('num' + d + 'Btn', d, d, 24)) } });
+    // 第2行：- / : ; ( ) $ @ " "
+    layout.push({ HStack: { subviews: ['-', '/', ':', ';', '(', ')', '$', '@', '“', '”'].map((s, i) => symKey('numB' + i + 'Btn', s, s, 22)) } });
+    // 第3行：#+= | . , 、 # ? ! . | ⌫
+    doc.symToggleBtn = { action: { keyboardType: 'symbolic' }, size: { width: '3/20' }, backgroundStyle: 'sysBackgroundStyle', foregroundStyle: 'symToggleFg' };
+    doc.symToggleFg = textStyle('#+=', 18, fg);
+    const r3 = [{ Cell: 'symToggleBtn' }];
+    ['.', ',', '、', '#', '?', '!', '.'].forEach((s, i) => r3.push(symKey('numC' + i + 'Btn', s, s, 22)));
+    r3.push({ Cell: 'backspaceButton' });
+    layout.push({ HStack: { subviews: r3 } });
+    // 第4行：拼音 | 空格 | 发送(回车，随场景显示发送/搜索/换行)
+    doc.toPrimaryBtn = { action: 'returnPrimaryKeyboard', size: { width: '1/5' }, backgroundStyle: 'sysBackgroundStyle', foregroundStyle: 'toPrimaryFg' };
+    doc.toPrimaryFg = textStyle('拼音', 16, fg);
+    if (doc.enterButton) doc.enterButton.size = { width: '1/5' }; // 发送键宽一点，和截图一致
+    layout.push({ HStack: { subviews: [{ Cell: 'toPrimaryBtn' }, { Cell: 'spaceButton' }, { Cell: 'enterButton' }] } });
     doc.keyboardLayout = layout;
     return doc;
   }
