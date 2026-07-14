@@ -96,6 +96,9 @@ body {
 }
 #topbar .brand { font-weight: 700; color: var(--accent-text); margin-right: 4px; white-space: nowrap; }
 #titleName { color: var(--text-dim); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.save-badge { font-size: 12px; padding: 2px 8px; border-radius: 10px; white-space: nowrap; border: 1px solid transparent; }
+.save-badge.dirty { color: #b45309; background: rgba(217,130,43,.16); border-color: rgba(217,130,43,.4); }
+.save-badge.clean { color: var(--text-dim); background: rgba(120,120,120,.12); }
 #topbar .gap { flex: 1; }
 select, input[type=text], input[type=number], textarea {
   background: var(--input-bg); color: var(--text); border: 1px solid var(--border2);
@@ -649,6 +652,8 @@ textarea.err, input.err { border-color: #e5484d; }
   <button class="btn" id="btnRedo" title="Ctrl+Y">↪ 重做</button>
   <button class="btn" id="btnRandomPress" title="给每个按键一个随机的按下颜色（导出后手机上同样生效）">🎲 按下随机色</button>
   <button class="btn" id="btnClearPress" title="取消所有键盘全部按键的按下颜色（撤销随机色/按下色，按键底色不动）">🚫 取消按下色</button>
+  <button class="btn" id="btnCmdRef" title="查所有「按键动作」和「#快捷指令」都是干嘛的（对照元书官方指南整理）">📖 指令参考</button>
+  <span id="saveBadge" class="save-badge" title="改了东西记得导出 .cskin 再导入手机——有还没导出的修改时这里会提醒你" style="display:none"></span>
   <span class="gap"></span>
   <select id="selDevice" title="设备与方向">
     <option value="iPhone-portrait">iPhone 17 Pro Max 竖屏</option>
@@ -2917,6 +2922,12 @@ const Actions = (() => {
     ['#keyboardMenu', '打开键盘菜单'],
     ['#clearSystemPasteboard', '清空系统剪贴板'],
     ['#deleteText', '删除选中的文本'],
+    ['#selectText', '全选输入框文字（iOS 系统有 Bug，慎用）'],
+    ['#copy', '复制选中文字（iOS 系统有 Bug，慎用）'],
+    ['#cut', '剪切选中文字（iOS 系统有 Bug，慎用）'],
+    ['#paste', '粘贴剪贴板内容（iOS 系统有 Bug，慎用）'],
+    ['#undo', '撤销文本编辑（iOS 系统有 Bug，慎用）'],
+    ['#redo', '重做文本编辑（iOS 系统有 Bug，慎用）'],
   ];
   const SHORTCUTS = SHORTCUT_PAIRS.map(p => p[0]);
   const SHORTCUT_LABELS = Object.fromEntries(SHORTCUT_PAIRS);
@@ -6838,7 +6849,26 @@ const App = (() => {
     undoStack: [],
     redoStack: [],
     _pendingSnap: null,
+    dirtySinceExport: false, // 打开/上次导出之后有没有改过东西（顶栏徽标用）
   };
+
+  // 顶栏「有修改未导出」徽标：缓解"改了到底导没导出、会不会白改"的焦虑
+  function updateSaveBadge() {
+    const b = document.getElementById('saveBadge');
+    if (!b) return;
+    if (!M().loaded) { b.style.display = 'none'; return; }
+    b.style.display = '';
+    if (app.dirtySinceExport) {
+      b.textContent = '● 有修改未导出';
+      b.className = 'save-badge dirty';
+      b.title = '你改了东西但还没导出 .cskin。记得点「导出 .cskin」再导入手机，否则改动不会到手机上。';
+    } else {
+      b.textContent = '✓ 无未导出改动';
+      b.className = 'save-badge clean';
+      b.title = '当前状态已导出（或刚打开、还没改动）。';
+    }
+  }
+  function markDirty() { app.dirtySinceExport = true; updateSaveBadge(); }
 
   // ---------- 当前文档 ----------
   function currentDoc(mode) {
@@ -6951,6 +6981,7 @@ const App = (() => {
       if (app.undoStack.length > 60) app.undoStack.shift();
       app.redoStack.length = 0;
     } catch (e) { console.warn('快照失败', e); }
+    markDirty();
   }
   function undo() {
     if (!app.undoStack.length) { toast('没有可撤销的操作'); return; }
@@ -6970,6 +7001,7 @@ const App = (() => {
     refreshLeftPanel();
     refreshInspector();
     updateTitle();
+    markDirty();
   }
 
   // ---------- 渲染 ----------
@@ -7597,6 +7629,7 @@ const App = (() => {
     refreshLeftPanel();
     refreshInspector();
     updateTitle();
+    updateSaveBadge();
   }
 
   function refreshInspector() {
@@ -7635,6 +7668,54 @@ const App = (() => {
   }
 
   // 🧭 结构图：整张皮肤的层级关系 + 每一层去哪儿改
+  // 指令 / 动作参考卡：把「按键动作」和「#快捷指令」的通俗中文说明集中成一张可搜索的卡片
+  // （借鉴参考工作台的「指令参考」，但直接复用本编辑器已整理好的中文注释）
+  function openCommandReference() {
+    const m = UI.modal('📖 指令 / 动作参考 —— 每个「动作 / #指令」都是干嘛的', '560px');
+    m.body.appendChild(el('div', 'hint-line',
+      '给某个键设置「动作」时可以从下面这些里挑；# 开头的是元书内置的特殊命令。可用搜索框按中文或代码过滤。（对照元书官方指南整理）'));
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.placeholder = '🔍 搜索：如 发送 / 切换 / #方案 / space …';
+    search.style.cssText = 'width:100%;margin:6px 0 10px;box-sizing:border-box;';
+    m.body.appendChild(search);
+    const listWrap = el('div', 'cmdref-wrap');
+    listWrap.style.cssText = 'max-height:52vh;overflow:auto;';
+    m.body.appendChild(listWrap);
+    const sections = [
+      { title: '⌨ 按键动作（这个键按下去做什么）', pairs: Actions.STANDARD },
+      { title: '# 快捷指令（元书内置的特殊命令）', pairs: Actions.SHORTCUT_PAIRS },
+    ];
+    function render(filter) {
+      listWrap.innerHTML = '';
+      const f = (filter || '').trim().toLowerCase();
+      let total = 0;
+      for (const sec of sections) {
+        const rows = sec.pairs.filter(([code, zh]) =>
+          !f || String(code).toLowerCase().includes(f) || String(zh).toLowerCase().includes(f));
+        if (!rows.length) continue;
+        total += rows.length;
+        const h = el('div', 'cmdref-sec', sec.title);
+        h.style.cssText = 'font-weight:700;margin:10px 0 4px;color:var(--accent-text);';
+        listWrap.appendChild(h);
+        for (const [code, zh] of rows) {
+          const row = el('div', 'cmdref-row');
+          row.style.cssText = 'display:flex;gap:10px;align-items:baseline;padding:3px 4px;border-bottom:1px solid var(--border);';
+          const c = el('code', 'cmdref-code', code);
+          c.style.cssText = 'flex:0 0 44%;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--text);word-break:break-all;';
+          const t = el('span', 'cmdref-zh', zh);
+          t.style.cssText = 'flex:1;color:var(--text-dim);';
+          row.appendChild(c); row.appendChild(t);
+          listWrap.appendChild(row);
+        }
+      }
+      if (!total) listWrap.appendChild(el('div', 'hint-line', '没有匹配的动作 / 指令，换个词试试。'));
+    }
+    search.oninput = () => render(search.value);
+    render('');
+    setTimeout(() => { try { search.focus(); } catch (_) {} }, 30);
+  }
+
   function openStructureMap() {
     const m = UI.modal('🧭 皮肤结构图 —— 什么东西在哪儿改', '560px');
     const go = tab => () => { m.close(); gotoTab(tab); };
@@ -7706,6 +7787,7 @@ const App = (() => {
   function afterLoad() {
     app.undoStack.length = 0;
     app.redoStack.length = 0;
+    app.dirtySinceExport = false;
     app.selection = null;
     // 默认选中 config 里 pinyin iPhone portrait 的键盘
     const cfg = M().config || {};
@@ -7911,6 +7993,7 @@ const App = (() => {
     try {
       const blob = await SkinModel.exportCskin();
       const name = (M().config && M().config.name ? M().config.name : 'skin') + '.cskin';
+      app.dirtySinceExport = false; updateSaveBadge();
       if (isMobileLike() || isInAppBrowser()) {
         // 手机：打包完成后弹面板，让用户在"新的一次点击"里保存/分享
         // （iOS 不允许在异步操作之后偷偷触发下载，这正是以前手机导不出的原因）
@@ -7958,6 +8041,7 @@ const App = (() => {
     document.getElementById('btnRedo').onclick = redo;
     document.getElementById('btnRandomPress').onclick = applyRandomPressColors;
     document.getElementById('btnClearPress').onclick = clearAllPressColors;
+    document.getElementById('btnCmdRef').onclick = openCommandReference;
 
     // 界面主题（明亮/暗黑）
     const applyTheme = t => {
