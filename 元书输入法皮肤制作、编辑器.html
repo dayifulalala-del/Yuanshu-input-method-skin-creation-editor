@@ -2851,7 +2851,7 @@ const UI = (() => {
     return b;
   }
 
-  function toast(msg, isErr) {
+  function toast(msg, isErr, ms) {
     let t = document.getElementById('toast');
     if (!t) {
       t = el('div'); t.id = 'toast';
@@ -2860,7 +2860,7 @@ const UI = (() => {
     t.textContent = msg;
     t.className = isErr ? 'err show' : 'show';
     clearTimeout(t._timer);
-    t._timer = setTimeout(() => t.classList.remove('show'), 2600);
+    t._timer = setTimeout(() => t.classList.remove('show'), ms || 2600);
   }
 
   // 模态框
@@ -4861,8 +4861,10 @@ const Panels = (() => {
     const mode = Renderer.state.mode;
     const docNames = Object.keys(M().docs[mode]).sort();
 
-    // config 里键盘类型的映射反查：文件名 -> [用途]
+    // config 里键盘类型的映射反查：文件名 -> [用途] + 中文友好名
+    const KTYPE_ZH = { pinyin: '拼音中文键盘', chinese: '中文键盘', alphabetic: '英文键盘', numeric: '数字键盘', symbolic: '符号键盘', classifySymbolic: '分类符号键盘', numericSymbolic: '数字符号键盘', emojis: 'Emoji 键盘', emoji: 'Emoji 键盘' };
     const usage = {};
+    const friendlyOf = {};
     const cfg = M().config || {};
     for (const kType in cfg) {
       const v = cfg[kType];
@@ -4872,19 +4874,26 @@ const Panels = (() => {
           const f = v[dev][ori];
           usage[f] = usage[f] || [];
           usage[f].push(`${kType}·${dev}·${ori === 'portrait' ? '竖' : ori === 'landscape' ? '横' : '悬浮'}`);
+          (friendlyOf[f] = friendlyOf[f] || new Set()).add(KTYPE_ZH[kType] || kType);
         }
       }
     }
 
-    container.appendChild(el('div', 'panel-hint', `当前编辑：${mode === 'light' ? '浅色' : '深色'}模式（顶部可切换）`));
+    container.appendChild(el('div', 'panel-hint',
+      `这些是你皮肤里的键盘，点一下就切到那个键盘编辑/预览。想改数字键盘就点「数字键盘」那一行，想改英文键盘就点「英文键盘」。（当前：${mode === 'light' ? '浅色' : '深色'}模式，顶部可切换浅/深）`));
 
     for (const name of docNames) {
       const row = el('div', 'file-row' + (Renderer.state.docName === name ? ' active' : ''));
-      const btn = button(name, () => {
+      const fname = friendlyOf[name] ? [...friendlyOf[name]].join(' / ') : null;
+      const btn = button('', () => {
         Renderer.state.docName = name;
         App.selection = null;
         App.renderAll();
       }, 'file-name');
+      // 显示中文友好名（数字键盘/英文键盘…），原文件名作小字副标题，找得到、也认得出
+      btn.innerHTML = fname
+        ? `<b>${fname}</b> <span style="opacity:.5;font-size:11px">${name}</span>`
+        : `${name} <span style="opacity:.5;font-size:11px">（未分配用途）</span>`;
       row.appendChild(btn);
       const u = usage[name];
       if (u) row.appendChild(el('div', 'file-usage', u.slice(0, 3).join(' ')));
@@ -8230,7 +8239,8 @@ const App = (() => {
           m.close();
           await SkinModel.newSkin(t9);
           afterLoad();
-          toast(t9 ? '九键皮肤已创建！注意：手机上还需启用「中文九键」输入方案才能打字（详见官网文档）' : '已创建模板皮肤，开始编辑吧');
+          toast((t9 ? '九键皮肤已创建（手机上还需启用「中文九键」方案才能打字）。' : '已创建模板皮肤。')
+            + '含拼音、英文、数字 3 个键盘——在左侧「键盘」页点名字即可切换，数字键盘就在里面。', false, 6000);
         }, 'pick-item');
         b.innerHTML = `<b>${lab}</b><br><span style="opacity:.65;font-size:12px">${desc}</span>`;
         m.body.appendChild(b);
